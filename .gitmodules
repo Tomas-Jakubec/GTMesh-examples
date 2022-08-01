@@ -1,0 +1,6 @@
+[submodule "GTMesh"]
+	path = GTMesh
+	url = https://github.com/Tomas-Jakubec/GTMesh.git
+[submodule "libs/GTMesh"]
+	path = libs/GTMesh
+	url = https://github.com/Tomas-Jakubec/GTMesh.git
