@@ -1,6 +1,6 @@
 #include <memory>
 #include <limits>
-#include "RKMSolver.hpp"
+#include "RKMSolver_omp.hpp"
 
 #include <GTMesh/Traits/Traits.h>
 #include <GTMesh/Traits/TraitsAlgorithm/TraitsAlgorithm.h>
@@ -72,20 +72,18 @@ struct HeatConductionProblem{
 
     void meshFaceColoring(){
         // Randomized coloring creates more even distribution of colors in unstrucutred meshes.
-        DBGCHECK;
-        auto faceColoring = mesh.template coloring<ProblemDimension-1, ProblemDimension, ColoringMethod::METHOD_RANDOM>();DBGCHECK;
-        std::size_t colorCount =0;DBGCHECK;
+        auto faceColoring = mesh.template coloring<ProblemDimension-1, ProblemDimension, ColoringMethod::METHOD_RANDOM>();
+        std::size_t colorCount =0;
         for (auto colorIndex : faceColoring.template getDataByPos<0>()) {
             if (colorCount < colorIndex) {
                 colorCount = colorIndex+1;
             }
-        }DBGCHECK;
-        nonConcurentFaces.resize(colorCount);DBGCHECK;
+        }
+        nonConcurentFaces.resize(colorCount);
         for (const auto& face : mesh.getFaces()){
             unsigned int colorIndex = faceColoring[face];
             nonConcurentFaces[colorIndex].emplace_back(face.getIndex());
         }
-        DBGCHECK;
     }
 
 
@@ -125,7 +123,7 @@ int main() {
     auto compData = hcp.loadMesh("../Meshes/mesh3D.vtk");
     hcp.exportMeshAndData(compData, "../out/heat_conduction_t_0s.vtk");
     for (int i = 0; i < 10; ++i) {
-        RKMSolver(hcp, compData, 1e-3, i, i + 1.0, 1e-4);
+        RKMSolverOMP(hcp, compData, 1e-3, i, i + 1.0, 1e-4);
         hcp.exportMeshAndData(compData, "../out/heat_conduction_t_" + std::to_string(i+1) + "s.vtk");
     }
 }
