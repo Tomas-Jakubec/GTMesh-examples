@@ -43,12 +43,13 @@ struct HeatConductionProblem{
     void calculateRHS(double time, //time is unused in this problem
                       const ProblemDataContainerType &compData,
                       ProblemDataContainerType &outDeltas){
-#pragma omp parallel for
-        for (const auto& cell : mesh.getCells()){
-            outDeltas[cell].T = 0;
+        #pragma omp for
+        for (size_t cellIndex = 0; cellIndex < mesh.getCells().size(); ++cellIndex){
+            outDeltas.template getDataByDim<ProblemDimension>()[cellIndex].T = 0;
         }
-        for (const auto& faces : nonConcurentFaces){
-#pragma omp parallel for
+
+        for (const auto& faces : nonConcurentFaces) {
+            #pragma omp for
             for (std::size_t i = 0; i < faces.size(); ++i){
                 const auto& face = mesh.getFaces()[faces[i]];
                 const auto cRI = face.getCellRightIndex(), cLI = face.getCellLeftIndex();

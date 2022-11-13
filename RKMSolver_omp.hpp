@@ -6,7 +6,7 @@
 template <typename Functor, typename ...T, unsigned int Dimension>
 void performVectorOperationOMP(Functor&& f, MeshDataContainer<T, Dimension>& ...args) {
     const auto& firstVector = std::get<0>(std::forward_as_tuple(args...));
-#pragma omp for
+    #pragma omp for
     for (std::size_t i = 0; i < firstVector.template getDataByPos<0>().size(); ++i) {
         f((args.template getDataByPos<0>()[i])...);
     }
@@ -17,12 +17,14 @@ template <typename Functor, typename ...T, unsigned int Dimension>
 double performVectorReductionMaxOMP(Functor&& f, MeshDataContainer<T, Dimension>& ...args) {
     const auto& firstVector = std::get<0>(std::forward_as_tuple(args...));
     double res = std::numeric_limits<double>::lowest();
-#pragma omp parallel
-#pragma omp for reduction(max : res)
-    for (std::size_t i = 0; i < firstVector.template getDataByPos<0>().size(); ++i) {
-        double tmp_res = f((args.template getDataByPos<0>()[i])...);
-        if (res < tmp_res) {
-            res = tmp_res;
+    #pragma omp parallel shared(res)
+    {
+        #pragma omp for reduction(max : res)
+        for (std::size_t i = 0; i < firstVector.template getDataByPos<0>().size(); ++i) {
+            double tmp_res = f((args.template getDataByPos<0>()[i])...);
+            if (res < tmp_res) {
+                res = tmp_res;
+            }
         }
     }
     return res;
@@ -82,7 +84,7 @@ void RKMSolverOMP(Problem& problem,
         error *= tau * (1.0 / 3.0);
 
         if (error < delta) {
-#pragma omp parallel
+            #pragma omp parallel
             performVectorOperationOMP([&tau](auto& compData, auto& K1, auto& K4, auto& K5){
                 compData += tau * (1.0 / 6.0) * (((K1 + K5)) + (4.0 * K4));},
                                    compData, K1, K4, K5);
