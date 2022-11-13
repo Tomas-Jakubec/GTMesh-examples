@@ -75,7 +75,6 @@ void RKMSolverOMP(Problem& problem,
         return max(abs(0.2 * K1 - 0.9 * K3 + 0.8 * K4 - 0.1 * K5));},
         K1, K3, K4, K5);
 
-        #pragma omp single
         error *= tau * (1.0 / 3.0);
 
         if (error < delta) {
