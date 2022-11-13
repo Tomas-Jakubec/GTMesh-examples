@@ -122,9 +122,9 @@ int main() {
     constexpr unsigned int Dim = 3;
     HeatConductionProblem<3> hcp;
     auto compData = hcp.loadMesh("../Meshes/mesh3D.vtk");
-    hcp.exportMeshAndData(compData, "../out/heat_conduction_t_0s.vtk");
+    hcp.exportMeshAndData(compData, "../out/heat_conduction-omp_graph-t_0s.vtk");
     for (int i = 0; i < 10; ++i) {
         RKMSolverOMP(hcp, compData, 1e-3, i, i + 1.0, 1e-4);
-        hcp.exportMeshAndData(compData, "../out/heat_conduction_t_" + std::to_string(i+1) + "s.vtk");
+        hcp.exportMeshAndData(compData, "../out/heat_conduction-omp_graph-t_" + std::to_string(i+1) + "s.vtk");
     }
 }

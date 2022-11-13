@@ -1,6 +1,6 @@
 #include <memory>
 #include <limits>
-#include "RKMSolver.hpp"
+#include "RKMSolver_omp.hpp"
 
 #include <GTMesh/Traits/Traits.h>
 #include <GTMesh/Traits/TraitsAlgorithm/TraitsAlgorithm.h>
@@ -19,6 +19,8 @@ struct FaceData
 {
     double measureOverCellsDistance;
     double measure;
+    // Auxiliary structure to store the intermediate result in the data structure of the edge
+    ComputationData flux;
 };
 
 struct CellData
@@ -37,29 +39,42 @@ struct HeatConductionProblem{
     MeshType mesh;
     const double T_wall = 300;
     MeshDataContainer<std::tuple<CellData, FaceData>,ProblemDimension, ProblemDimension-1> meshData;
+    std::vector<std::vector<std::size_t>> nonConcurentFaces;
+
 
     void calculateRHS(double time, //time is unused in this problem
                       const ProblemDataContainerType &compData,
                       ProblemDataContainerType &outDeltas){
-        for (const auto& cell : mesh.getCells()){
-            outDeltas[cell].T = 0;
-        }
-        for (const auto& face : mesh.getFaces()){
+        #pragma omp for
+        for (std::size_t i = 0; i < mesh.getFaces().size(); ++i){
+            const auto& face = mesh.getFaces()[i];
             const auto cRI = face.getCellRightIndex(), cLI = face.getCellLeftIndex();
             if (!isBoundaryIndex(cRI) and !isBoundaryIndex(cLI)){
                 const auto &cR = mesh.getCells().at(cRI), &cL = mesh.getCells()[cLI];
-                const auto dT_dn = (compData.at(cL).T - compData.at(cR).T) * meshData[face].measureOverCellsDistance;
-                outDeltas.at(cL).T -= dT_dn;
-                outDeltas.at(cR).T += dT_dn;
+                meshData[face].flux.T = (compData.at(cL).T - compData.at(cR).T) * meshData[face].measureOverCellsDistance;
             } else if (isBoundaryIndex(cLI)) {
                 const auto &cR = mesh.getCells().at(cRI);
-                const auto dT_dn = (T_wall - compData[cR].T) * meshData[face].measureOverCellsDistance;
-                outDeltas.at(cR).T += dT_dn;
+                meshData[face].flux.T = (T_wall - compData[cR].T) * meshData[face].measureOverCellsDistance;
             } else {
                 const auto &cL = mesh.getCells().at(cLI);
-                const auto dT_dn = (compData[cL].T - T_wall) * meshData[face].measureOverCellsDistance;
-                outDeltas.at(cL).T -= dT_dn;
+                meshData[face].flux.T = (compData[cL].T - T_wall) * meshData[face].measureOverCellsDistance;
             }
+        }
+
+        #pragma omp for
+        for (std::size_t cellI = 0; cellI < mesh.getCells().size(); ++cellI) {
+            const auto& cell = mesh.getCells()[cellI];
+            ComputationData auxDelta {0};
+            mesh.template apply<ProblemDimension, ProblemDimension - 1>(cellI,
+                [&] (std::size_t cellIndex, std::size_t faceIndex){
+                    const auto& face = mesh.getFaces()[faceIndex];
+                    if (cellIndex == face.getCellLeftIndex()) {
+                        auxDelta.T -= meshData[face].flux.T;
+                    } else {
+                        auxDelta.T += meshData[face].flux.T;
+                    }
+                });
+            outDeltas[cell] = auxDelta;
         }
     }
 
@@ -96,9 +111,9 @@ int main() {
     constexpr unsigned int Dim = 3;
     HeatConductionProblem<3> hcp;
     auto compData = hcp.loadMesh("../Meshes/mesh3D.vtk");
-    hcp.exportMeshAndData(compData, "../out/heat_conduction-t_0s.vtk");
+    hcp.exportMeshAndData(compData, "../out/heat_conduction-omp_struct-t_0s.vtk");
     for (int i = 0; i < 10; ++i) {
-        RKMSolver(hcp, compData, 1e-3, i, i + 1.0, 1e-4);
-        hcp.exportMeshAndData(compData, "../out/heat_conduction-t_" + std::to_string(i+1) + "s.vtk");
+        RKMSolverOMP(hcp, compData, 1e-3, i, i + 1.0, 1e-4);
+        hcp.exportMeshAndData(compData, "../out/heat_conduction-omp_struct-t_" + std::to_string(i+1) + "s.vtk");
     }
 }
