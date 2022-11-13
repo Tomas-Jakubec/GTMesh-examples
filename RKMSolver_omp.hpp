@@ -42,55 +42,52 @@ void RKMSolverOMP(Problem& problem,
 
     double tau = tau_ini;
     double time = startTime;
-    bool run = true;
 
+    #pragma omp parallel shared(time, tau)
     while (time < finalT) {
+        #pragma omp single
         if (time + tau > finalT) {
             tau = finalT - time;
         }
-        #pragma omp parallel
-        {
-            problem.calculateRHS(time, compData, K1);
+        problem.calculateRHS(time, compData, K1);
+        performVectorOperationOMP([&tau](auto &Ktemp, auto& compData, auto& K1){
+            Ktemp = compData + (tau * (1.0 / 3.0) * K1);},
+        Ktemp, compData, K1);
 
-            performVectorOperationOMP([&tau](auto &Ktemp, auto& compData, auto& K1){
-                Ktemp = compData + (tau * (1.0 / 3.0) * K1);},
-            Ktemp, compData, K1);
+        problem.calculateRHS(time, Ktemp, K2);
+        performVectorOperationOMP([&tau](auto &Ktemp, auto& compData, auto& K1, auto& K2){
+            Ktemp = compData + (tau * (1.0 / 6.0) * (K1 + K2));},
+        Ktemp, compData, K1, K2);
 
-            problem.calculateRHS(time, Ktemp, K2);
+        problem.calculateRHS(time, Ktemp, K3);
+        performVectorOperationOMP([&tau](auto &Ktemp, auto& compData, auto& K1, auto& K3){
+        Ktemp = compData + (tau * (0.125 * K1 + 0.375 * K3));
+        },Ktemp, compData, K1, K3);
 
-            performVectorOperationOMP([&tau](auto &Ktemp, auto& compData, auto& K1, auto& K2){
-                Ktemp = compData + (tau * (1.0 / 6.0) * (K1 + K2));},
-            Ktemp, compData, K1, K2);
-
-            problem.calculateRHS(time, Ktemp, K3);
-
-            performVectorOperationOMP([&tau](auto &Ktemp, auto& compData, auto& K1, auto& K3){
-            Ktemp = compData + (tau * (0.125 * K1 + 0.375 * K3));
-            },Ktemp, compData, K1, K3);
-
-            problem.calculateRHS(time, Ktemp, K4);
-
-            performVectorOperationOMP([&tau](auto &Ktemp, auto& compData, auto& K1, auto& K3, auto& K4){
-            Ktemp = compData + (tau * ((0.5 * K1) - (1.5 * K3) + (2.0 * K4)));},
-            Ktemp, compData, K1, K3, K4);
+        problem.calculateRHS(time, Ktemp, K4);
+        performVectorOperationOMP([&tau](auto &Ktemp, auto& compData, auto& K1, auto& K3, auto& K4){
+        Ktemp = compData + (tau * ((0.5 * K1) - (1.5 * K3) + (2.0 * K4)));},
+        Ktemp, compData, K1, K3, K4);
 
 
-            problem.calculateRHS(time, Ktemp, K5);
-        } // end of the parallel secion
+        problem.calculateRHS(time, Ktemp, K5);
         double error = performVectorReductionMaxOMP([](auto& K1, auto& K3, auto& K4, auto& K5)->double{
         return max(abs(0.2 * K1 - 0.9 * K3 + 0.8 * K4 - 0.1 * K5));},
         K1, K3, K4, K5);
 
+        #pragma omp single
         error *= tau * (1.0 / 3.0);
 
         if (error < delta) {
-            #pragma omp parallel
             performVectorOperationOMP([&tau](auto& compData, auto& K1, auto& K4, auto& K5){
                 compData += tau * (1.0 / 6.0) * (((K1 + K5)) + (4.0 * K4));},
                                    compData, K1, K4, K5);
+            #pragma omp single
             time += tau;
+
             if (error == 0.0) continue;
         }
+        #pragma omp single
         tau *= std::pow(delta/error, 0.2) * 0.8;
     }
 }
