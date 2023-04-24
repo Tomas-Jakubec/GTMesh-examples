@@ -72,7 +72,8 @@ Thumbs.db
 *.exe
 
 # build
+build_dir/
 build/
 
 # binary output
-out/
+out*/

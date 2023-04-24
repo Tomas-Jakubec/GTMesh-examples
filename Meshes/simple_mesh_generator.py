@@ -56,4 +56,4 @@ if __name__ == "__main__":
 
     for num_cells in [9]:
         numberOfVertices = {"x":num_cells + 1, "y":num_cells + 1, "z":num_cells+1}
-        generate_vtk_box(f"mesh3d.vtk", dimensions, numberOfVertices)
+        generate_vtk_box(f"mesh3D.vtk", dimensions, numberOfVertices)

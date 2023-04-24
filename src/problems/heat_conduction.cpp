@@ -1,6 +1,6 @@
 #include <memory>
 #include <limits>
-#include "RKMSolver.hpp"
+#include "solvers/RKMSolver.hpp"
 
 #include <GTMesh/Traits/Traits.h>
 #include <GTMesh/Traits/TraitsAlgorithm/TraitsAlgorithm.h>
@@ -33,6 +33,7 @@ struct HeatConductionProblem{
     using ResultType = ComputationData;
     using ProblemDataContainerType = MeshDataContainer<ResultType, ProblemDimension>;
     std::shared_ptr<MeshReader<ProblemDimension>> meshReader;
+    VTKMeshWriter<ProblemDimension, size_t, double> meshWriter;
 
     MeshType mesh;
     const double T_wall = 300;
@@ -84,7 +85,6 @@ struct HeatConductionProblem{
     void exportMeshAndData(ProblemDataContainerType& compData,
                            const std::string& outputPath){
         std::ofstream ofst(outputPath);
-        VTKMeshWriter<ProblemDimension, size_t, double> meshWriter;
         meshWriter.writeHeader(ofst, "heat-conduction");
         meshWriter.writeToStream(ofst, mesh,meshReader->getCellTypes());
         VTKMeshDataWriter<ProblemDimension> dataWriter;
@@ -92,13 +92,15 @@ struct HeatConductionProblem{
     }
 };
 
-int main() {
+int main(int argc, char** argv) {
     constexpr unsigned int Dim = 3;
     HeatConductionProblem<3> hcp;
-    auto compData = hcp.loadMesh("../Meshes/mesh3D.vtk");
-    hcp.exportMeshAndData(compData, "../out/heat_conduction-t_0s.vtk");
+    std::string meshPath = argc <= 1 ? "Meshes/mesh3D.vtk" : argv[1];
+    auto compData = hcp.loadMesh(meshPath);
+    std::string outPath = argc <= 2 ? "out" : argv[2];
+    hcp.exportMeshAndData(compData, outPath + "/heat_conduction-t_0s.vtk");
     for (int i = 0; i < 10; ++i) {
         RKMSolver(hcp, compData, 1e-3, i, i + 1.0, 1e-4);
-        hcp.exportMeshAndData(compData, "../out/heat_conduction-t_" + std::to_string(i+1) + "s.vtk");
+        hcp.exportMeshAndData(compData, outPath + "/heat_conduction-t_" + std::to_string(i+1) + "s.vtk");
     }
 }
