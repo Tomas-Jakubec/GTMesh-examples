@@ -2,11 +2,12 @@ This repository contains several applications presenting the usage of the GTMesh
 GTMesh library is a basic library for handling unstructured meshes and computation on them.
 
 The computation is demonstrated on the heat conduction problem:
-
-$\begin{array}{cll}
+```math
+\begin{array}{cll}
 \frac{\partial T\left(\boldsymbol{x},t\right)}{\partial t} & =-\nabla T(\boldsymbol{x},t) & \text{ for }\boldsymbol{x}\in\varOmega^{\circ}\\
 T\left(\boldsymbol{x},t\right) & =T_{\text{wall}} & \text{ for }\boldsymbol{x}\in\partial\varOmega
-\end{array}$
+\end{array}
+```
 
 There are three solutions demonstrated. All use finite volume method and Merson version of the Runge-Kutta explicit solver.
 - simple single threaded approach,
