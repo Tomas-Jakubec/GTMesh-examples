@@ -21,6 +21,7 @@ There are three solutions demonstrated. All use finite volume method and Merson 
 - python3 for generation of basic meshes
 
 # How to run examples
+1. fetch submodules `git submodule update --init`
 1. generate the mesh
     ```bash
      cd Meshes
