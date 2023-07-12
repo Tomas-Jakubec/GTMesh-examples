@@ -70,7 +70,7 @@ struct HeatConductionProblem{
         mesh.setupBoundaryCells();
         mesh.setupBoundaryCellsCenters();
         meshData.allocateData(mesh);
-        auto measures = mesh.computeElementMeasures();
+        auto measures = mesh.template computeElementMeasures<METHOD_TESSELLATED>();
         auto cellsDist = computeCellsDistance(mesh);
         for (const auto& cell : mesh.getCells()){
             meshData[cell].invCellVolume = 1.0 / measures[cell];
@@ -93,9 +93,11 @@ struct HeatConductionProblem{
 };
 
 int main(int argc, char** argv) {
-    constexpr unsigned int Dim = 3;
-    HeatConductionProblem<3> hcp;
-    std::string meshPath = argc <= 1 ? "Meshes/mesh3D.vtk" : argv[1];
+    HeatConductionProblem<3> hcp;       // 3D version
+//     HeatConductionProblem<2> hcp;    // 2D version
+    std::string defaultMeshPath = "../Meshes/mesh3D.vtk";       // 3D version
+//     std::string defaultMeshPath = "../Meshes/mesh2D.vtk";    // 2D version
+    std::string meshPath = argc <= 1 ? defaultMeshPath : argv[1];
     auto compData = hcp.loadMesh(meshPath);
     std::string outPath = argc <= 2 ? "out" : argv[2];
     hcp.exportMeshAndData(compData, outPath + "/heat_conduction-t_0s.vtk");

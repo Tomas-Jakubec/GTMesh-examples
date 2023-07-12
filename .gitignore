@@ -74,6 +74,7 @@ Thumbs.db
 # build
 build_dir/
 build/
+build.ninja
 
 # binary output
 out*/
