@@ -28,21 +28,21 @@ There are three solutions demonstrated. All use finite volume method and Merson 
      python3 simple_mesh_generator.py
      cd ..
     ```
-    This will produce `Meshes\mesh3D.vtk`. To produce a finer mesh, increase the number of cells in the main function.
+    This will produce `Meshes/mesh3D.vtk`. To produce a finer mesh, increase the number of cells in the main function.
 2. build the application
     ```bash
     mkdir build_dir
     cmake -S . -B build_dir
-    cmake --build build_dir -DCMAKE_BUILD_TYPE=Release
+    cmake --build build_dir --config Release
     ```
 3. execute the example 
     ```bash
     mkdir -p out
-    ./build_dir/GTMesh-example "Meshes\mesh3D.vtk" "out"
+    ./build_dir/GTMesh-example "Meshes/mesh3D.vtk" "out"
     mkdir -p out-graph
-    ./build_dir/GTMesh-example-omp_parallel_graph "Meshes\mesh3D.vtk" "out-graph"
+    ./build_dir/GTMesh-example-omp_parallel_graph "Meshes/mesh3D.vtk" "out-graph"
     mkdir -p out-struct
-    ./build_dir/GTMesh-example-omp_parallel_struct "Meshes\mesh3D.vtk" "out-struct"
+    ./build_dir/GTMesh-example-omp_parallel_struct "Meshes/mesh3D.vtk" "out-struct"
     ```
     the result is stored in the `out`, `out-graph` and `out-struct` directories.
 
@@ -54,11 +54,11 @@ The mesh was kindly provided by [J. Hahn, Slovak University of Technology, Brati
 Try running
 ```bash
 mkdir -p out
-./build_dir/GTMesh-example "Meshes\mesh3D-unstructured.fpma" "out"
+./build_dir/GTMesh-example "Meshes/mesh3D-unstructured.fpma" "out"
 mkdir -p out-graph
-./build_dir/GTMesh-example-omp_parallel_graph "Meshes\mesh3D-unstructured.fpma" "out-graph"
+./build_dir/GTMesh-example-omp_parallel_graph "Meshes/mesh3D-unstructured.fpma" "out-graph"
 mkdir -p out-struct
-./build_dir/GTMesh-example-omp_parallel_struct "Meshes\mesh3D-unstructured.fpma" "out-struct"
+./build_dir/GTMesh-example-omp_parallel_struct "Meshes/mesh3D-unstructured.fpma" "out-struct"
 ```
 The results are still exported in VTK format, however, the cells are tessellated to tetrahedrons.
 Use the surface with edges to see the tessellation. 
@@ -72,9 +72,9 @@ Use the surface with edges to see the tessellation.
 To instruct the algorithm to compute in 2D, uncomment the lines that commented with `2D version` and comment out the ones with `3D version`. Recompile the project and try running.
 ```bash
 mkdir -p out-2D
-./build_dir/GTMesh-example "Meshes\mesh2D.vtk" "out-2D"
+./build_dir/GTMesh-example "Meshes/mesh2D.vtk" "out-2D"
 mkdir -p out-2D-graph
-./build_dir/GTMesh-example-omp_parallel_graph "Meshes\mesh2D.vtk" "out-2D-graph"
+./build_dir/GTMesh-example-omp_parallel_graph "Meshes/mesh2D.vtk" "out-2D-graph"
 mkdir -p out-2D-struct
-./build_dir/GTMesh-example-omp_parallel_struct "Meshes\mesh2D.vtk" "out-2D-struct"
+./build_dir/GTMesh-example-omp_parallel_struct "Meshes/mesh2D.vtk" "out-2D-struct"
 ```
