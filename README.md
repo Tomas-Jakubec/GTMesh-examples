@@ -4,7 +4,7 @@ GTMesh library is a basic library for handling unstructured meshes and computati
 The computation is demonstrated on the heat conduction problem:
 ```math
 \begin{array}{cll}
-\frac{\partial T\left(\boldsymbol{x},t\right)}{\partial t} & =-\nabla T(\boldsymbol{x},t) & \text{ for }\boldsymbol{x}\in\varOmega^{\circ}\\
+\frac{\partial T\left(\boldsymbol{x},t\right)}{\partial t} & =\Delta T(\boldsymbol{x},t) & \text{ for }\boldsymbol{x}\in\varOmega^{\circ}\\
 T\left(\boldsymbol{x},t\right) & =T_{\text{wall}} & \text{ for }\boldsymbol{x}\in\partial\varOmega
 \end{array}
 ```
