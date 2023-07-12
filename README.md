@@ -49,6 +49,8 @@ There are three solutions demonstrated. All use finite volume method and Merson 
 # Unstructured mesh
 There is `mesh3D-unstructured.fpma` file in the `Meshes` directory.
 It contains an example of an unstructured mesh.
+The mesh was kindly provided by [J. Hahn, Slovak University of Technology, Bratislava](https://www.researchgate.net/profile/Jooyoung-Hahn).
+
 Try running
 ```bash
 mkdir -p out
