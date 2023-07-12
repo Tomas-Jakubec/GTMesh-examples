@@ -120,12 +120,12 @@ struct HeatConductionProblem{
 
 int main(int argc, char** argv) {
     HeatConductionProblem<3> hcp;       // 3D version
-    // HeatConductionProblem<2> hcp;    // 2D version
+//     HeatConductionProblem<2> hcp;    // 2D version
     std::string defaultMeshPath = "../Meshes/mesh3D.vtk";       // 3D version
-    // std::string defaultMeshPath = "../Meshes/mesh2D.vtk";    // 2D version
+//     std::string defaultMeshPath = "../Meshes/mesh2D.vtk";    // 2D version
     std::string meshPath = argc <= 1 ? defaultMeshPath : argv[1];
     auto compData = hcp.loadMesh(meshPath);
-    std::string outPath = argc <= 2 ? "out_omp_coloring" : argv[2];
+    std::string outPath = argc <= 2 ? "out_omp_graph" : argv[2];
     hcp.exportMeshAndData(compData, outPath + "/heat_conduction-omp_struct-t_0s.vtk");
     for (int i = 0; i < 10; ++i) {
         RKMSolverOMP(hcp, compData, 1e-3, i, i + 1.0, 1e-4);

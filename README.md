@@ -44,11 +44,11 @@ There are three solutions demonstrated. All use finite volume method and Merson 
     mkdir -p out-struct
     ./build_dir/GTMesh-example-omp_parallel_struct "Meshes\mesh3D.vtk" "out-struct"
     ```
-    the result is stored in the `out` directory.
+    the result is stored in the `out`, `out-graph` and `out-struct` directories.
 
 # Unstructured mesh
 There is `mesh3D-unstructured.fpma` file in the `Meshes` directory.
-This file contains an example of an unstructured mesh.
+It contains an example of an unstructured mesh.
 Try running
 ```bash
 mkdir -p out
@@ -59,6 +59,7 @@ mkdir -p out-struct
 ./build_dir/GTMesh-example-omp_parallel_struct "Meshes\mesh3D-unstructured.fpma" "out-struct"
 ```
 The results are still exported in VTK format, however, the cells are tessellated to tetrahedrons.
+Use the surface with edges to see the tessellation. 
 
 > Note that the computation on the unstructured mesh is more time-consuming.
 > The causes might be as follows:
