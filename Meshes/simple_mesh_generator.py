@@ -97,15 +97,15 @@ def main():
     It produces two files with meshes. One 2D and one 3D.
     Modify the parameters of the functions to produce finer meshes.
     """
-    dimensions_2D = {"x":0.5, "y":1}
-    num_cells_2D = 20
-    number_of_vertices_2D = {"x":num_cells_2D + 1, "y":num_cells_2D * 2 + 1}
+    dimensions_2D = {"x":1, "y":1}
+    num_cells_2D = 40
+    number_of_vertices_2D = {"x":num_cells_2D + 1, "y":num_cells_2D + 1}
     generate_vtk_rectangle(f"mesh2D.vtk", dimensions_2D, number_of_vertices_2D)
 
-    dimensions_3D = {"x":0.5, "y":0.5, "z":1}
-    num_cells_3D = 9
-    number_of_vertices_3D = {"x":num_cells_3D + 1, "y":num_cells_3D + 1, "z":num_cells_3D * 2 + 1}
-    generate_vtk_block(f"mesh3D.vtk", dimensions_3D, number_of_vertices_3D)
+    # dimensions_3D = {"x":0.5, "y":0.5, "z":1}
+    # num_cells_3D = 9
+    # number_of_vertices_3D = {"x":num_cells_3D + 1, "y":num_cells_3D + 1, "z":num_cells_3D * 2 + 1}
+    # generate_vtk_block(f"mesh3D.vtk", dimensions_3D, number_of_vertices_3D)
 
 if __name__ == "__main__":
     main()
