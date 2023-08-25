@@ -12,12 +12,13 @@
 
 struct ComputationData
 {
-    double f;
+    double minf;
     double F;
+    double tildeF;
     size_t cellIndex;
 };
 
-MAKE_NAMED_ATTRIBUTE_TRAIT(ComputationData, "F(x)", f, "F_plain(x)", F, "cellIndex", cellIndex);
+MAKE_NAMED_ATTRIBUTE_TRAIT(ComputationData, "f_{min}", minf, "F^{~}=", tildeF, "F=f(x)/f_min(x)", F, "cellIndex", cellIndex);
 
 
 template<size_t Dimension, typename IndexType = size_t, typename RealType = double>
@@ -61,23 +62,19 @@ public:
     using VertexType = Vertex<Dimension, RealType>;
     const std::vector<VertexType> vertices;
 
-    const RealType scaleFactor;
     const RealType treshold = 0.1;
-    const RealType valueTreshold = 0.25;
 
     VertexScoreCalculator(
             const std::vector<VertexType> vertices,
-            RealType scaleFactor = 1.0,
-            RealType treshold = 0.1,
-            RealType valueTreshold = 0.25
-            ): vertices(vertices), scaleFactor(scaleFactor), treshold(treshold), valueTreshold(valueTreshold){
+            RealType treshold = 0.1
+            ): vertices(vertices), treshold(treshold){
         if (vertices.empty()) {
             throw std::range_error("Vertex calculator cannot be initialized with empty vertex set.");
         }
     }
 
     double scoreVertex(const VertexType& xCell, const VertexType& x) const {
-        return 1.0 / ( scaleFactor * (xCell - x).normEuclid() + 1);
+        return (xCell - x).normEuclid();
     }
 
     struct VertexScoreData {
@@ -89,20 +86,21 @@ public:
         VertexScoreData result = {0.0, std::vector<size_t>()};
         result.neighboringCells.reserve(5);
         std::vector<double> f_xs(vertices.size());
-        double maxF = 0;
-        for (size_t i = 0; i < vertices.size(); ++i) {
-            const auto& vert = vertices[i];
-
-            auto f_x = scoreVertex(x, vert);
+        double minF = scoreVertex(x, vertices[0]);
+        f_xs[0] = minF;
+        size_t minI = 0;
+        for (size_t i = 1; i < vertices.size(); ++i) {
+            auto f_x = scoreVertex(x, vertices[i]);
             f_xs[i] = f_x;
 
-            if(f_x > maxF) {
-                maxF = f_x;
+            if(f_x < minF) {
+                minF = f_x;
+                minI = i;
             }
         }
         for (size_t i = 0; i < vertices.size(); ++i){
-            auto fraction = f_xs[i] / maxF;
-            if (f_xs[i] > valueTreshold && fraction > treshold) {
+            if (f_xs[i] - minF <= treshold) {
+                auto fraction = i == minI ? 1.0 : (minF / f_xs[i]);
                 result.vertexScore -= fraction;
                 result.neighboringCells.emplace_back(i);
             }
@@ -131,12 +129,68 @@ public:
                 minF = f_x;
             }
         }
-        return maxF - minF;
+        return std::pow(maxF - minF, 2);
     }
 };
 
 MAKE_ATTRIBUTE_TRAIT(VertexScoreCalculator<2>::VertexScoreData,
                              vertexScore,neighboringCells );
+
+
+template<typename T>
+class VectorView {
+    std::vector<T>& data;
+    std::vector<size_t> indices;
+public:
+
+    VectorView(std::vector<T>& data, std::vector<size_t> indices): data(data), indices(indices) {}
+
+    template<typename T_>
+    static VectorView<T_> wrap(std::vector<T_>& data) {
+        std::vector<size_t> indices(data.size());
+        for (size_t i = 0; i < indices.size(); ++i) {
+            indices[i] = i;
+        }
+        return VectorView<T_>(data, indices);
+    }
+
+    VectorView slice(const std::vector<size_t>& indices) const {
+        std::vector<size_t> newIndices;
+        for (auto index : indices) {
+            newIndices.emplace_back(this->indices[index]);
+        }
+        return VectorView(data, newIndices);
+    }
+
+    size_t size() const {
+        return indices.size();
+    }
+
+    T& operator[](size_t index) {
+        return data[indices[index]];
+    }
+
+    const T& operator[](size_t index) const {
+        return data[indices[index]];
+    }
+
+    size_t getGlobalIndexAt(size_t index) const {
+        return indices.at(index);
+    }
+
+    const std::vector<size_t>& getIndices() const {
+        return indices;
+    }
+
+    std::vector<T> toVector() const {
+        std::vector<T> result;
+        result.reserve(indices.size());
+        for (auto index : indices){
+            result.emplace_back(data[index]);
+        }
+        return result;
+    }
+};
 
 
 template<unsigned int ProblemDimension>
@@ -149,24 +203,26 @@ struct MeshGenerationProblem{
 
     MeshType mesh;
 
-    void calculateFx(ProblemDataContainerType& data, const std::vector<Vertex<ProblemDimension, double>> vertices) {
+    void calculateFx(ProblemDataContainerType& data, std::vector<Vertex<ProblemDimension, double>> vertices) {
         std::vector<double> f_xs(vertices.size());
-        double treshold = (1.0 - 0.1) / (1.0 + 0.1);
-        VertexScoreCalculator<ProblemDimension> calculator(vertices, 1.0, treshold, 0.0);
+        double treshold = 0.025;
+        VertexScoreCalculator<ProblemDimension> calculator(vertices, treshold);
         for (const auto& cell : mesh.getCells()) {
             auto score = calculator.calculateScore(cell.getCenter());
-            data[cell].f = score.vertexScore;
-            data[cell].F = calculator.calculateScoreSum(cell.getCenter());
-            double maxF = 0;
-            size_t maxI = 0;
-            for (size_t i = 0; i < vertices.size(); ++i) {
+            data[cell].F = score.vertexScore;
+            auto vectorSlice = VectorView<Vertex<ProblemDimension>>(vertices, score.neighboringCells).toVector();
+            data[cell].tildeF = VertexScoreCalculator<ProblemDimension>(vectorSlice, treshold).calculateScoreSum(cell.getCenter());
+            double minF = calculator.scoreVertex(cell.getCenter(), vertices[0]);
+            size_t minI = 0;
+            for (size_t i = 1; i < vertices.size(); ++i) {
                 auto vertF = calculator.scoreVertex(cell.getCenter(), vertices[i]);
-                if (vertF > maxF) {
-                    maxF = vertF;
-                    maxI = i;
+                if (vertF < minF) {
+                    minF = vertF;
+                    minI = i;
                 }
             }
-            data[cell].cellIndex = maxI;
+            data[cell].minf = minF;
+            data[cell].cellIndex = minI;
         }
     }
 
@@ -324,7 +380,7 @@ Vertex<2> optimizationDFP(Vertex<2> x, F&& f, double maxDist = 0.01) {
 }
 
 template<typename F>
-Vertex<2> optimizationBFGS(Vertex<2> x, F&& f, double maxDist = 0.01) {
+Vertex<2> optimizationBFGS(Vertex<2> x, F&& f, double maxDist = 0.01, const double treshold = 1e-5) {
     double delta = maxDist * 1e-3;
     double invDelta = 1.0 / (2*delta);
 
@@ -337,7 +393,7 @@ Vertex<2> optimizationBFGS(Vertex<2> x, F&& f, double maxDist = 0.01) {
     Vector<2,Vector<2>> S {{1,0},{0,1}};
     int cnt = 0;
     while(true){
-        if(++cnt > 100 || g_i.normEuclid() < 10e-5) {
+        if(++cnt > 100 || g_i.normEuclid() < treshold) {
             DBGVAR(g_i.normEuclid(), cnt);
             return x_i;
         }
@@ -371,65 +427,20 @@ Vertex<2> optimizationBFGS(Vertex<2> x, F&& f, double maxDist = 0.01) {
     }
 }
 
-template<typename T>
-class VectorView {
-    std::vector<T>& data;
-    std::vector<size_t> indices;
-public:
 
-    VectorView(std::vector<T>& data, std::vector<size_t> indices): data(data), indices(indices) {}
-
-    template<typename T_>
-    static VectorView<T_> wrap(std::vector<T_>& data) {
-        std::vector<size_t> indices(data.size());
-        for (size_t i = 0; i < indices.size(); ++i) {
-            indices[i] = i;
-        }
-        return VectorView<T_>(data, indices);
-    }
-
-    VectorView slice(const std::vector<size_t>& indices) const {
-        std::vector<size_t> newIndices;
-        for (auto index : indices) {
-            newIndices.emplace_back(this->indices[index]);
-        }
-        return VectorView(data, newIndices);
-    }
-
-    size_t size() const {
-        return indices.size();
-    }
-
-    T& operator[](size_t index) {
-        return data[indices[index]];
-    }
-
-    const T& operator[](size_t index) const {
-        return data[indices[index]];
-    }
-
-    size_t getGlobalIndexAt(size_t index) const {
-        return indices.at(index);
-    }
-
-    const std::vector<size_t>& getIndices() const {
-        return indices;
-    }
-
-    std::vector<T> toVector() const {
-        std::vector<T> result;
-        result.reserve(indices.size());
-        for (auto index : indices){
-            result.emplace_back(data[index]);
-        }
-        return result;
-    }
-};
-
-
-
+std::unordered_map<std::string, Vertex<2>> cache;
 
 void locateVertex(const Vertex<2>& startVertex, const VectorView<Vertex<2>>& vertices) {
+
+    std::string key = "";
+    for(auto index : vertices.getIndices()) {
+        key += std::to_string(index) + ";";
+    }
+    auto cachedValueIter = cache.find(key);
+    if (cachedValueIter != cache.end()) {
+        DBGVAR(*cachedValueIter, vertices);
+        return;
+    }
 
     auto meanVertex = vertices[0];
     for (size_t i = 1; i < vertices.size(); ++i) {
@@ -451,11 +462,12 @@ void locateVertex(const Vertex<2>& startVertex, const VectorView<Vertex<2>>& ver
         return;
     }
 
-    VertexScoreCalculator<2> calculator(vertices.toVector(), 1.0 / meanDist, 0.0, 0.0);
+    VertexScoreCalculator<2> calculator(vertices.toVector(), 1.0);
     auto F = [&calculator](Vertex<2> x) {
         return calculator.calculateScoreSum(x);
     };
-    auto vertex2 = optimizationBFGS(startVertex, F, meanDist);
+    auto vertex2 = optimizationBFGS(startVertex, F, meanDist, 1e-8);
+    cache[key] = vertex2;
     DBGVAR(startVertex, calculator.calculateScore(vertex2), vertex2, vertices.getIndices(), vertices);
 }
 
@@ -463,7 +475,7 @@ void locateVertex(const Vertex<2>& startVertex, const VectorView<Vertex<2>>& ver
 void preciseScan(const VirtualGrid<2>& grid, const VectorView<Vertex<2>>& vertices) {
     std::vector<std::vector<VertexScoreCalculator<2>::VertexScoreData>> gridData;
     double treshold = (1.0 - grid.stepSize()) / (1.0 + grid.stepSize());
-    VertexScoreCalculator<2> calculator(vertices.toVector(), 1.0, treshold);
+    VertexScoreCalculator<2> calculator(vertices.toVector(), treshold);
     for (size_t i = 0; i < grid.nElements +1; ++i){
         std::vector<VertexScoreCalculator<2>::VertexScoreData> row;
         gridData.emplace_back(row);
@@ -486,13 +498,12 @@ void preciseScan(const VirtualGrid<2>& grid, const VectorView<Vertex<2>>& vertic
 
 
 void scanArea(const VirtualGrid<2>& grid, const VectorView<Vertex<2>>& vertices) {
-    double treshold = (1.0 - grid.stepSize()) / (1.0 + grid.stepSize());
-    VertexScoreCalculator<2> calculator(vertices.toVector(), 1.0, treshold, 0.0);
+    double treshold = 2.0 * (1.414213562373095) * grid.stepSize();
+    VertexScoreCalculator<2> calculator(vertices.toVector(), treshold);
     for (size_t i = 0; i < grid.nElements +1; ++i){
         for (size_t j = 0; j < grid.nElements +1; ++j){
             auto score = calculator.calculateScore(grid.at({i,j}));
             if (score.neighboringCells.size() > 2){
-                DBGVAR(score);
                 auto affectedVertices = vertices.slice(score.neighboringCells);
                 auto refinedGrid = VirtualGrid<2>::withCenterOrigin(grid.at({i,j}), 11, 1.1*0.5 * grid.stepSize());
                 if (affectedVertices.size() == 3) {
@@ -513,7 +524,7 @@ int main(int argc, char** argv) {
 
 
     std::vector<Vertex<2>> vertices = {
-        {0.5, 0.55},
+        {0.5, 0.5},
         {0.75, 0.5},
         {0.5, 0.75},
         {0.25, 0.5},
@@ -559,13 +570,13 @@ int main(int argc, char** argv) {
 //    auto vertAvg = (vertSlice[0] + vertSlice[1] + vertSlice[2]) / 3.0;
 //    DBGVAR(calc.calculateScoreSum(vertAvg), calc.calculateScore(vertAvg).vertexScore);
 
-    MeshGenerationProblem<2> mgp;
-    std::string defaultMeshPath = "../Meshes/mesh2D.vtk";    // 2D version
-    std::string meshPath = argc <= 1 ? defaultMeshPath : argv[1];
-    auto compData = mgp.loadMesh(meshPath);
-    std::string outPath = argc <= 2 ? "../out" : argv[2];
+//    MeshGenerationProblem<2> mgp;
+//    std::string defaultMeshPath = "../Meshes/mesh2D.vtk";    // 2D version
+//    std::string meshPath = argc <= 1 ? defaultMeshPath : argv[1];
+//    auto compData = mgp.loadMesh(meshPath);
+//    std::string outPath = argc <= 2 ? "../out" : argv[2];
 
-    mgp.calculateFx(compData, vertices);
-    DBGMSG("exporting mesh");
-    mgp.exportMeshAndData(compData, outPath + "/MeshGenerator.vtk");
+//    mgp.calculateFx(compData, vertices);
+//    DBGMSG("exporting mesh");
+//    mgp.exportMeshAndData(compData, outPath + "/MeshGenerator.vtk");
 }
