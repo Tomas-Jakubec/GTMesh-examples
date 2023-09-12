@@ -306,6 +306,14 @@ double multiply(const Vector<2>& x, const Vector<2>& y){
     return result;
 }
 
+Vector<1> multiply(const Vector<1,Vector<1>>& A, const Vector<1>& x){
+    return Vector<1>{A[0][0] * x[0]};
+}
+
+double multiply(const Vector<1>& x, const Vector<1>& y){
+    return x[0] * y[0];
+}
+
 Vector<2,Vector<2>> tenzorMultiply(const Vector<2>& x, const Vector<2>& y_t) {
     Vector<2,Vector<2>> result{{},{}};
     for(unsigned int i = 0; i < 2; ++i) {
@@ -316,6 +324,10 @@ Vector<2,Vector<2>> tenzorMultiply(const Vector<2>& x, const Vector<2>& y_t) {
     return result;
 }
 
+Vector<1,Vector<1>> tenzorMultiply(const Vector<1>& x, const Vector<1>& y_t) {
+    return {{x[0] * y_t[0]}};
+}
+
 Vector<2,Vector<2>> operator*(double alpha, const Vector<2,Vector<2>>& A) {
     auto result = A;
     for(unsigned int i = 0; i < 2; ++i) {
@@ -324,6 +336,10 @@ Vector<2,Vector<2>> operator*(double alpha, const Vector<2,Vector<2>>& A) {
         }
     }
     return result;
+}
+
+Vector<1,Vector<1>> operator*(double alpha, const Vector<1,Vector<1>>& A) {
+    return Vector<1, Vector<1>>{{A[0][0] * alpha}};
 }
 
 template<typename F>
@@ -428,15 +444,39 @@ Vertex<2> optimizationBFGS(Vertex<2> x, F&& f, double maxDist = 0.01, const doub
 }
 
 
-std::unordered_map<std::string, Vertex<2>> cache;
+namespace std {
+    template<unsigned int Dimension, typename T>
+    class hash<Vertex<Dimension, T>> {
+        public:
+        size_t operator()(const Vertex<Dimension, T>& vert) const noexcept {
+            const std::hash<T> hashT{};
+            size_t hash = 0;
+            for (size_t i = 0; i < Dimension; ++i) {
+                hash ^= hashT(vert[i]) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
+            }
+            return hash;
+        }
+    };
+
+    template<typename T>
+    class hash<std::vector<T>> {
+        public:
+        size_t operator()(const std::vector<T>& vec) const noexcept {
+            const std::hash<T> hashT{};
+            size_t hash = 0;
+            for (size_t i = 0; i < vec.size(); ++i) {
+                hash ^= hashT(vec[i]) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
+            }
+            return hash;
+        }
+    };
+}
+
+std::unordered_map<std::vector<size_t>, Vertex<2,double>> cache;
 
 void locateVertex(const Vertex<2>& startVertex, const VectorView<Vertex<2>>& vertices) {
 
-    std::string key = "";
-    for(auto index : vertices.getIndices()) {
-        key += std::to_string(index) + ";";
-    }
-    auto cachedValueIter = cache.find(key);
+    auto cachedValueIter = cache.find(vertices.getIndices());
     if (cachedValueIter != cache.end()) {
         DBGVAR(*cachedValueIter, vertices);
         return;
@@ -467,7 +507,7 @@ void locateVertex(const Vertex<2>& startVertex, const VectorView<Vertex<2>>& ver
         return calculator.calculateScoreSum(x);
     };
     auto vertex2 = optimizationBFGS(startVertex, F, meanDist, 1e-8);
-    cache[key] = vertex2;
+    cache[vertices.getIndices()] = vertex2;
     DBGVAR(startVertex, calculator.calculateScore(vertex2), vertex2, vertices.getIndices(), vertices);
 }
 
@@ -496,8 +536,13 @@ void preciseScan(const VirtualGrid<2>& grid, const VectorView<Vertex<2>>& vertic
 
 }
 
+template<typename T>
+std::vector<T> cat(std::vector<T> v1, const std::vector<T>& v2) {
+    v1.insert(v1.end(), v2.begin(), v2.end());
+    return v1;
+}
 
-void scanArea(const VirtualGrid<2>& grid, const VectorView<Vertex<2>>& vertices) {
+void scanArea(const VirtualGrid<2>& grid, const VectorView<Vertex<2>>& vertices, const double maxPrecision = 1e-2) {
     double treshold = 2.0 * (1.414213562373095) * grid.stepSize();
     VertexScoreCalculator<2> calculator(vertices.toVector(), treshold);
     for (size_t i = 0; i < grid.nElements +1; ++i){
@@ -510,18 +555,191 @@ void scanArea(const VirtualGrid<2>& grid, const VectorView<Vertex<2>>& vertices)
                     locateVertex(grid.at({i,j}), affectedVertices);
                     continue;
                 }
-                if (refinedGrid.stepSize() < 1e-2){
+                if (refinedGrid.stepSize() < maxPrecision){
                     preciseScan(refinedGrid, affectedVertices);
                 } else {
-                    scanArea(refinedGrid, vertices);
+                    scanArea(refinedGrid, vertices, maxPrecision);
                 }
             }
         }
     }
 }
 
-int main(int argc, char** argv) {
 
+template<typename F>
+Vertex<1> optimizationBFGSBoundary(Vertex<1> x, F&& f, const std::function<Vertex<2>(const Vertex<1>&)> boundaryMapping, double maxDist = 0.01, const double treshold = 1e-5) {
+    double delta = maxDist * 1e-3;
+    double invDelta = 1.0 / (2*delta);
+
+    auto x_i = x;
+
+    double fx = f(boundaryMapping(x));
+    double df_dx = (f(boundaryMapping(x_i-Vertex<1>({-delta}))) - f(boundaryMapping(x_i-Vertex<1>({delta})))) * invDelta;
+    Vector<1> g_i = {df_dx};
+    Vector<1,Vector<1>> S {{1}};
+    int cnt = 0;
+    while(true){
+        if(++cnt > 100 || g_i.normEuclid() < treshold) {
+            return x_i;
+        }
+        auto d = -1.0 * multiply(S,  g_i);
+
+        double gamma = maxDist / d.normEuclid();
+        double auxFx = 0;
+        Vertex<1> x_i1;
+        // line search
+        do {
+            x_i1 = x_i + gamma * d;
+            auxFx = f(boundaryMapping(x_i1));
+            gamma *= 0.7;
+        } while (auxFx > fx);
+        fx = auxFx;
+        double df_dx = (f(boundaryMapping(x_i1-Vertex<1>({-delta}))) - f(boundaryMapping(x_i1-Vertex<1>({delta})))) * invDelta;
+        auto g_i1 = Vector<1>{df_dx};
+        auto p = x_i1 - x_i;
+        auto q = g_i1 - g_i;
+        x_i = x_i1;
+        g_i = g_i1;
+        auto p_q = multiply(p,q);
+        if (abs(p_q) < 1e-30) {
+            return x_i;
+        }
+        auto S_q = multiply(S,q);
+        auto deltaS = (tenzorMultiply(p, S_q) + tenzorMultiply(S_q, p) - (1 + (multiply(q, S_q)/p_q)) * tenzorMultiply(p,p)) / p_q;
+        S -= deltaS;
+    }
+}
+
+void locateVertexBoundary(const Vertex<1>& startVertex, const std::function<Vertex<2>(const Vertex<1>&)> boundaryMapping, const VectorView<Vertex<2>>& vertices, const std::vector<size_t>& boundaryIndices) {
+    auto cachedValueIter = cache.find(vertices.getIndices());
+    if (cachedValueIter != cache.end()) {
+        // DBGVAR(*cachedValueIter, vertices);
+        return;
+    }
+
+    auto meanVertex = vertices[0];
+    for (size_t i = 1; i < vertices.size(); ++i) {
+        meanVertex += vertices[i];
+    }
+    meanVertex /= vertices.size();
+    double meanDist = 0.0;
+    double maxDist = 0.0;
+    for (size_t i = 0; i < vertices.size(); ++i) {
+        double dist = (meanVertex - vertices[i]).normEuclid();
+        meanDist += dist;
+        if (maxDist < dist) {
+            maxDist = dist;
+        }
+    }
+    meanDist /= vertices.size();
+
+    if ((boundaryMapping(startVertex) - meanVertex).normEuclid() > maxDist){
+        return;
+    }
+
+    VertexScoreCalculator<2> calculator(vertices.toVector(), 1.0);
+    auto F = [&calculator](Vertex<2> x) {
+        return calculator.calculateScoreSum(x);
+    };
+    auto vertex2 = optimizationBFGSBoundary(startVertex, F, boundaryMapping, meanDist, meanDist * 1e-3);
+    cache[std::move(cat(vertices.getIndices(), boundaryIndices))] = boundaryMapping(vertex2);
+}
+
+void scanAreaBoundary(const VirtualGrid<1>& grid, const std::function<Vertex<2>(const Vertex<1>&)> boundaryMapping, const VectorView<Vertex<2>>& vertices, const std::vector<size_t>& boundaryIndices, const double maxPrecision = 1e-2) {
+    double treshold = 2.0 * grid.stepSize();
+    VertexScoreCalculator<2> calculator(vertices.toVector(), treshold);
+    for (size_t i = 0; i < grid.nElements +1; ++i){
+        auto score = calculator.calculateScore(boundaryMapping(grid.at({i})));
+        if (score.neighboringCells.size() > 1){
+            auto affectedVertices = vertices.slice(score.neighboringCells);
+            auto refinedGrid = VirtualGrid<1>::withCenterOrigin(grid.at({i}), 11, 1.1*0.5 * grid.stepSize());
+            if (affectedVertices.size() == 2) {
+                locateVertexBoundary(grid.at({i}), boundaryMapping, affectedVertices, boundaryIndices);
+                continue;
+            }
+            if (refinedGrid.stepSize() < maxPrecision){
+                locateVertexBoundary(grid.at({i}), boundaryMapping, affectedVertices, boundaryIndices);
+            } else {
+                scanAreaBoundary(refinedGrid, boundaryMapping, vertices, boundaryIndices, maxPrecision);
+            }
+        }
+    }
+}
+
+
+auto buildMeshFromCache(std::unordered_map<std::vector<size_t>, Vertex<2,double>>& cache) {
+    std::unordered_map<size_t, std::unordered_map<size_t,std::vector<std::size_t>>> buildCache;
+    std::vector<std::reference_wrapper<Vertex<2>>> vertices;
+    vertices.reserve(buildCache.size());
+
+    for(auto item : cache) {
+        vertices.emplace_back(cache[item.first]);
+        for(const auto index : item.first) {
+            auto cachedData = buildCache.find(index);
+            if (cachedData == buildCache.end()) {
+                cachedData = buildCache.emplace(index, std::unordered_map<size_t,std::vector<std::size_t>>()).first;
+            }
+            auto& cachedNeighbors = cachedData->second;
+            for (const auto index2 : item.first){
+                if (index2 == index) {
+                    continue;
+                }
+                auto cachedNeighborIter = cachedNeighbors.find(index2);
+                if (cachedNeighborIter == cachedNeighbors.end()) {
+                    cachedNeighborIter = cachedNeighbors.emplace(index2, std::vector<std::size_t>()).first;
+                }
+                cachedNeighborIter->second.emplace_back(vertices.size() -1);
+            }
+        }
+    }
+    DBGCHECK;
+    DBGVAR(buildCache);
+    using MeshType = UnstructuredMesh<2, size_t, double>;
+    MeshType mesh;
+    DBGVAR(vertices);
+    for (auto ref : vertices){
+        DBGVAR(ref.get());
+        mesh.getVertices().emplace_back(MeshType::Vertex(mesh.getVertices().size(), ref.get()));
+    }
+    std::unordered_map<std::vector<size_t>, std::reference_wrapper<MeshType::Edge>> edgeCache;
+    DBGCHECK;
+    for (const auto& cellCache : buildCache) {
+        if (isBoundaryIndex(cellCache.first)) {
+            continue;
+        }
+        auto cellIndex = mesh.getCells().size();
+        mesh.getCells().push_back(cellIndex);
+        auto & cell = mesh.getCells().back();
+        size_t lastEdgeIndex = INVALID_INDEX(size_t);
+        size_t firstEdgeIndex;
+        for(const auto& cellBoundary : cellCache.second) {
+            if(cellBoundary.second.size() >= 2 ){
+                auto cachedEdge = edgeCache.find(cellBoundary.second);
+                size_t newIndex;
+                if (cachedEdge != edgeCache.end()) {
+                    newIndex = cachedEdge->second.get().getIndex();
+                } else {
+                    newIndex = mesh.getEdges().size();
+                    mesh.getEdges().emplace_back(MeshType::Edge(newIndex, cellBoundary.second[0], cellBoundary.second[1]));
+                }
+                auto & edge = mesh.getEdges()[newIndex];
+                if (lastEdgeIndex == INVALID_INDEX(size_t)){
+                    cell.setBoundaryElementIndex(newIndex);
+                    firstEdgeIndex = newIndex;
+                } else {
+                    edge.setNextBElem(lastEdgeIndex, cellIndex);
+                }
+                lastEdgeIndex = newIndex;
+            }
+        }
+        mesh.getEdges()[firstEdgeIndex].setNextBElem(lastEdgeIndex, cellIndex);
+    }
+    DBGCHECK;
+    DBGVAR(mesh.getVertices());
+    return mesh;
+}
+
+int main(int argc, char** argv) {
 
     std::vector<Vertex<2>> vertices = {
         {0.5, 0.5},
@@ -535,12 +753,40 @@ int main(int argc, char** argv) {
         {0.1, 0.1},
         {0.1, 0.9},
 
-//        {0.2, 0.9},
+    //    {0.2, 0.9},
+    };
+    VirtualGrid<2> grid = VirtualGrid<2>::withCenterOrigin({0.5,0.5}, 10, 0.5);
+    auto verticesView = VectorView<Vertex<2>>::wrap(vertices);
+    scanArea(grid, verticesView);
+    auto gridBoundary = VirtualGrid<1>::withCenterOrigin({0.5}, 10, 0.5);
+    auto b1 = [](const Vertex<1>& v){
+        return Vertex<2>{v[0], 0.0};
+    };
+    auto b2 = [](const Vertex<1>& v){
+        return Vertex<2>{v[0], 1.0};
     };
 
-    VirtualGrid<2> grid = VirtualGrid<2>::withCenterOrigin({0.5,0.5}, 10, 0.5);
-    scanArea(grid, VectorView<Vertex<2>>::wrap(vertices));
+    auto b3 = [](const Vertex<1>& v){
+        return Vertex<2>{0.0, v[0]};
+    };
 
+    auto b4 = [](const Vertex<1>& v){
+        return Vertex<2>{1.0, v[0]};
+    };
+    // makeBoundaryIndex(0)
+    scanAreaBoundary(gridBoundary, b1, verticesView, {makeBoundaryIndex(0ul)});
+    scanAreaBoundary(gridBoundary, b2, verticesView, {makeBoundaryIndex(1ul)});
+    scanAreaBoundary(gridBoundary, b3, verticesView, {makeBoundaryIndex(2ul)});
+    scanAreaBoundary(gridBoundary, b4, verticesView, {makeBoundaryIndex(3ul)});
+    VertexScoreCalculator<2> calculator(vertices, 1e-4);
+    cache[cat(calculator.calculateScore(Vertex<2>{0.0,0.0}).neighboringCells, {makeBoundaryIndex(0ul), makeBoundaryIndex(2ul)})] = Vertex<2>{0.0,0.0};//0 2
+    cache[cat(calculator.calculateScore(Vertex<2>{1.0,0.0}).neighboringCells, {makeBoundaryIndex(0ul), makeBoundaryIndex(3ul)})] = Vertex<2>{1.0,0.0};//0 3
+    cache[cat(calculator.calculateScore(Vertex<2>{0.0,1.0}).neighboringCells, {makeBoundaryIndex(1ul), makeBoundaryIndex(2ul)})] = Vertex<2>{0.0,1.0};//1 2
+    cache[cat(calculator.calculateScore(Vertex<2>{1.0,1.0}).neighboringCells, {makeBoundaryIndex(1ul), makeBoundaryIndex(3ul)})] = Vertex<2>{1.0,1.0};//1 3
+    DBGVAR(cache);
+
+    auto mesh = buildMeshFromCache(cache);
+    mesh.write("test-mesh.vtk");
 //    auto F = [](Vertex<2> x) {
 //        return std::pow(x.normEuclid(),2);
 //    };
