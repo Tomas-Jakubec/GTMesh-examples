@@ -2,6 +2,7 @@
 #include <limits>
 #include <iomanip>
 #include <assert.h>
+#include <list>
 #include "solvers/RKMSolver.hpp"
 
 #include <GTMesh/Traits/Traits.h>
@@ -19,6 +20,61 @@ struct ComputationData
 };
 
 MAKE_NAMED_ATTRIBUTE_TRAIT(ComputationData, "f_{min}", minf, "F^{~}=", tildeF, "F=f(x)/f_min(x)", F, "cellIndex", cellIndex);
+
+template<typename T>
+class VectorView {
+    std::vector<T>& data;
+    std::vector<size_t> indices;
+public:
+
+    VectorView(std::vector<T>& data, std::vector<size_t> indices): data(data), indices(indices) {}
+
+    VectorView slice(const std::vector<size_t>& indices) const {
+        std::vector<size_t> newIndices;
+        for (auto index : indices) {
+            newIndices.emplace_back(this->indices[index]);
+        }
+        return VectorView(data, newIndices);
+    }
+
+    size_t size() const {
+        return indices.size();
+    }
+
+    T& operator[](size_t index) {
+        return data[indices[index]];
+    }
+
+    const T& operator[](size_t index) const {
+        return data[indices[index]];
+    }
+
+    size_t getGlobalIndexAt(size_t index) const {
+        return indices.at(index);
+    }
+
+    const std::vector<size_t>& getIndices() const {
+        return indices;
+    }
+
+    std::vector<T> toVector() const {
+        std::vector<T> result;
+        result.reserve(indices.size());
+        for (auto index : indices){
+            result.emplace_back(data[index]);
+        }
+        return result;
+    }
+};
+
+template<typename T>
+static VectorView<T> wrapToVectorView(std::vector<T>& data) {
+    std::vector<size_t> indices(data.size());
+    for (size_t i = 0; i < indices.size(); ++i) {
+        indices[i] = i;
+    }
+    return VectorView<T>(data, indices);
+}
 
 
 template<size_t Dimension, typename IndexType = size_t, typename RealType = double>
@@ -60,17 +116,18 @@ class VertexScoreCalculator {
 
 public:
     using VertexType = Vertex<Dimension, RealType>;
-    const std::vector<VertexType> vertices;
+    const VectorView<VertexType>& vertices;
 
     const RealType treshold = 0.1;
 
     VertexScoreCalculator(
-            const std::vector<VertexType> vertices,
+            const VectorView<VertexType>& vertices,
             RealType treshold = 0.1
             ): vertices(vertices), treshold(treshold){
-        if (vertices.empty()) {
-            throw std::range_error("Vertex calculator cannot be initialized with empty vertex set.");
-        }
+    }
+
+    VertexScoreCalculator withVertices(const VectorView<VertexType>& vertices) {
+        return VertexScoreCalculator(vertices, treshold);
     }
 
     double scoreVertex(const VertexType& xCell, const VertexType& x) const {
@@ -108,6 +165,30 @@ public:
         return result;
     }
 
+    auto calculateNeighbors(const VertexType& x, const double treshold) const {
+        auto result = std::vector<size_t>();
+        result.reserve(5);
+        std::vector<double> f_xs(vertices.size());
+        double minF = scoreVertex(x, vertices[0]);
+        f_xs[0] = minF;
+        size_t minI = 0;
+        for (size_t i = 1; i < vertices.size(); ++i) {
+            auto f_x = scoreVertex(x, vertices[i]);
+            f_xs[i] = f_x;
+
+            if(f_x < minF) {
+                minF = f_x;
+                minI = i;
+            }
+        }
+        for (size_t i = 0; i < vertices.size(); ++i){
+            if (f_xs[i] - minF <= treshold) {
+                result.emplace_back(i);
+            }
+        }
+        return result;
+    }
+
     RealType calculateScoreSum(const VertexType& x) const {
         RealType result = 0.0;
         std::vector<double> f_xs(vertices.size());
@@ -137,62 +218,6 @@ MAKE_ATTRIBUTE_TRAIT(VertexScoreCalculator<2>::VertexScoreData,
                              vertexScore,neighboringCells );
 
 
-template<typename T>
-class VectorView {
-    std::vector<T>& data;
-    std::vector<size_t> indices;
-public:
-
-    VectorView(std::vector<T>& data, std::vector<size_t> indices): data(data), indices(indices) {}
-
-    template<typename T_>
-    static VectorView<T_> wrap(std::vector<T_>& data) {
-        std::vector<size_t> indices(data.size());
-        for (size_t i = 0; i < indices.size(); ++i) {
-            indices[i] = i;
-        }
-        return VectorView<T_>(data, indices);
-    }
-
-    VectorView slice(const std::vector<size_t>& indices) const {
-        std::vector<size_t> newIndices;
-        for (auto index : indices) {
-            newIndices.emplace_back(this->indices[index]);
-        }
-        return VectorView(data, newIndices);
-    }
-
-    size_t size() const {
-        return indices.size();
-    }
-
-    T& operator[](size_t index) {
-        return data[indices[index]];
-    }
-
-    const T& operator[](size_t index) const {
-        return data[indices[index]];
-    }
-
-    size_t getGlobalIndexAt(size_t index) const {
-        return indices.at(index);
-    }
-
-    const std::vector<size_t>& getIndices() const {
-        return indices;
-    }
-
-    std::vector<T> toVector() const {
-        std::vector<T> result;
-        result.reserve(indices.size());
-        for (auto index : indices){
-            result.emplace_back(data[index]);
-        }
-        return result;
-    }
-};
-
-
 template<unsigned int ProblemDimension>
 struct MeshGenerationProblem{
     using MeshType = UnstructuredMesh<ProblemDimension, size_t, double>;
@@ -206,11 +231,12 @@ struct MeshGenerationProblem{
     void calculateFx(ProblemDataContainerType& data, std::vector<Vertex<ProblemDimension, double>> vertices) {
         std::vector<double> f_xs(vertices.size());
         double treshold = 0.025;
-        VertexScoreCalculator<ProblemDimension> calculator(vertices, treshold);
+        auto verticesView = wrapToVectorView(vertices);
+        VertexScoreCalculator<ProblemDimension> calculator(verticesView, treshold);
         for (const auto& cell : mesh.getCells()) {
             auto score = calculator.calculateScore(cell.getCenter());
             data[cell].F = score.vertexScore;
-            auto vectorSlice = VectorView<Vertex<ProblemDimension>>(vertices, score.neighboringCells).toVector();
+            auto vectorSlice = verticesView.slice(score.neighboringCells);
             data[cell].tildeF = VertexScoreCalculator<ProblemDimension>(vectorSlice, treshold).calculateScoreSum(cell.getCenter());
             double minF = calculator.scoreVertex(cell.getCenter(), vertices[0]);
             size_t minI = 0;
@@ -472,13 +498,105 @@ namespace std {
     };
 }
 
-std::unordered_map<std::vector<size_t>, Vertex<2,double>> cache;
 
-void locateVertex(const Vertex<2>& startVertex, const VectorView<Vertex<2>>& vertices) {
+class Cache {
+    using cacheElementT = std::pair<std::vector<std::size_t>, Vertex<2>>;
+    std::vector<cacheElementT> cacheData;
+    std::unordered_map<std::size_t, std::set<std::size_t>> cacheMap;
+public:
+    void insert(const std::vector<std::size_t>& indices, Vertex<2> vertex) {
+        auto newIndex = cacheData.size();
+        cacheData.emplace_back(std::make_pair(indices, vertex));
+        for (const auto index : indices) {
+            auto indexIter = cacheMap.find(index);
+            if (indexIter == cacheMap.end()) {
+                indexIter = cacheMap.emplace(index, std::set<std::size_t>()).first;
+            }
+            indexIter->second.emplace(newIndex);
+        }
+    }
+
+    void insert(std::vector<std::size_t>&& indices, Vertex<2> vertex) {
+        auto newIndex = cacheData.size();
+        cacheData.emplace_back(std::make_pair(indices, vertex));
+        for (const auto index : indices) {
+            auto indexIter = cacheMap.find(index);
+            if (indexIter == cacheMap.end()) {
+                indexIter = cacheMap.emplace(index, std::set<std::size_t>()).first;
+            }
+            indexIter->second.emplace(newIndex);
+        }
+    }
+    
+    auto find(const std::vector<std::size_t>& indices) {
+        auto cachedValueIter = cacheMap.find(indices[0]);
+        std::set<std::size_t> result;
+        if (cachedValueIter != cacheMap.end()) {
+            result = cachedValueIter->second;
+        } else {
+            return cacheData.end();
+        }
+        for (std::size_t i = 1; i < indices.size(); ++i) {
+            auto indexValIter = cacheMap.find(indices[i]);
+            if (indexValIter != cacheMap.end()) {
+                auto& indexSet = indexValIter->second;
+                std::set<std::size_t> resultIntersection;
+                std::set_intersection(result.begin(), result.end(), indexSet.begin(), indexSet.end(), std::inserter(resultIntersection, resultIntersection.begin())); 
+                result = resultIntersection;
+            } else {
+                return cacheData.end();
+            }   
+            
+        }
+        if (result.size() == 0) {
+            return cacheData.end();
+        }
+        if (result.size() != 1) {
+            DBGVAR(indices, cacheData, result);
+            throw std::runtime_error("Cache invalid state -> multiple results for indices");
+        }
+        return cacheData.begin() + *result.begin();
+    }
+
+
+    auto begin() {
+        return cacheData.begin();
+    }
+
+    auto end() {
+        return cacheData.end();
+    }
+
+    auto begin() const {
+        return cacheData.cbegin();
+    }
+
+    auto end() const {
+        return cacheData.cend();
+    }
+    
+    auto at(const std::vector<std::size_t>& indices) {
+        auto iter = find(indices);
+        if (iter == end()) {
+            throw std::out_of_range("Indices not found in the cache!");
+        }
+        return *iter;
+    }
+};
+
+Cache cache;
+
+template <typename T>
+bool isSubset(const std::vector<T>& set1, const std::vector<T>& set2) {
+    std::vector<T> intersection;
+    std::set_intersection(set1.begin(), set1.end(), set2.begin(), set2.end(), std::back_inserter(intersection));
+    return intersection.size() == set1.size();
+}
+
+void locateVertex(const Vertex<2>& startVertex, const VectorView<Vertex<2>>& vertices, const VectorView<Vertex<2>>& enclosingVertices) {
 
     auto cachedValueIter = cache.find(vertices.getIndices());
     if (cachedValueIter != cache.end()) {
-        DBGVAR(*cachedValueIter, vertices);
         return;
     }
 
@@ -502,38 +620,18 @@ void locateVertex(const Vertex<2>& startVertex, const VectorView<Vertex<2>>& ver
         return;
     }
 
-    VertexScoreCalculator<2> calculator(vertices.toVector(), 1.0);
+    VertexScoreCalculator<2> calculator(vertices, 1.0);
     auto F = [&calculator](Vertex<2> x) {
         return calculator.calculateScoreSum(x);
     };
-    auto vertex2 = optimizationBFGS(startVertex, F, meanDist, 1e-8);
-    cache[vertices.getIndices()] = vertex2;
-    DBGVAR(startVertex, calculator.calculateScore(vertex2), vertex2, vertices.getIndices(), vertices);
-}
-
-
-void preciseScan(const VirtualGrid<2>& grid, const VectorView<Vertex<2>>& vertices) {
-    std::vector<std::vector<VertexScoreCalculator<2>::VertexScoreData>> gridData;
-    double treshold = (1.0 - grid.stepSize()) / (1.0 + grid.stepSize());
-    VertexScoreCalculator<2> calculator(vertices.toVector(), treshold);
-    for (size_t i = 0; i < grid.nElements +1; ++i){
-        std::vector<VertexScoreCalculator<2>::VertexScoreData> row;
-        gridData.emplace_back(row);
-        for (size_t j = 0; j < grid.nElements +1; ++j){
-            auto score = calculator.calculateScore(grid.at({i,j}));
-            gridData.back().emplace_back(score);
-        }
+    auto vertex2 = optimizationBFGS(meanVertex, F, meanDist, 1e-5);
+    // Calculate the real neghborhood
+    auto neighbors = calculator.withVertices(enclosingVertices).calculateNeighbors(vertex2, 1e-5);
+    auto actualVertices = enclosingVertices.slice(neighbors);
+    if (isSubset(vertices.getIndices(), actualVertices.getIndices())){
+        cache.insert(neighbors, vertex2);
     }
-    for (size_t i = 1; i < grid.nElements; ++i){
-        for (size_t j = 1; j < grid.nElements; ++j){
-            auto [score, n] = gridData[i][j];
-            if (n.size() >= 3) {
-                auto localVertices = vertices.slice(gridData[i][j].neighboringCells);
-                locateVertex(grid.at({i,j}), localVertices);
-            }
-        }
-    }
-
+    DBGVAR(startVertex, meanVertex, calculator.calculateScore(vertex2), vertex2, vertices.getIndices(), vertices, actualVertices.getIndices());
 }
 
 template<typename T>
@@ -544,19 +642,19 @@ std::vector<T> cat(std::vector<T> v1, const std::vector<T>& v2) {
 
 void scanArea(const VirtualGrid<2>& grid, const VectorView<Vertex<2>>& vertices, const double maxPrecision = 1e-2) {
     double treshold = 2.0 * (1.414213562373095) * grid.stepSize();
-    VertexScoreCalculator<2> calculator(vertices.toVector(), treshold);
+    VertexScoreCalculator<2> calculator(vertices, treshold);
     for (size_t i = 0; i < grid.nElements +1; ++i){
         for (size_t j = 0; j < grid.nElements +1; ++j){
-            auto score = calculator.calculateScore(grid.at({i,j}));
-            if (score.neighboringCells.size() > 2){
-                auto affectedVertices = vertices.slice(score.neighboringCells);
-                auto refinedGrid = VirtualGrid<2>::withCenterOrigin(grid.at({i,j}), 11, 1.1*0.5 * grid.stepSize());
+            auto neighboringCells = calculator.calculateNeighbors(grid.at({i,j}), treshold);
+            if (neighboringCells.size() > 2){
+                auto affectedVertices = vertices.slice(neighboringCells);
+                auto refinedGrid = VirtualGrid<2>::withCenterOrigin(grid.at({i,j}), 10, 0.5 * grid.stepSize());
                 if (affectedVertices.size() == 3) {
-                    locateVertex(grid.at({i,j}), affectedVertices);
+                    locateVertex(grid.at({i,j}), affectedVertices, vertices);
                     continue;
                 }
                 if (refinedGrid.stepSize() < maxPrecision){
-                    preciseScan(refinedGrid, affectedVertices);
+                    locateVertex(grid.at({i,j}), affectedVertices, vertices);
                 } else {
                     scanArea(refinedGrid, vertices, maxPrecision);
                 }
@@ -611,9 +709,9 @@ Vertex<1> optimizationBFGSBoundary(Vertex<1> x, F&& f, const std::function<Verte
 }
 
 void locateVertexBoundary(const Vertex<1>& startVertex, const std::function<Vertex<2>(const Vertex<1>&)> boundaryMapping, const VectorView<Vertex<2>>& vertices, const std::vector<size_t>& boundaryIndices) {
-    auto cachedValueIter = cache.find(vertices.getIndices());
+    auto cachedValueIter = cache.find(cat(vertices.getIndices(), boundaryIndices));
     if (cachedValueIter != cache.end()) {
-        // DBGVAR(*cachedValueIter, vertices);
+        DBGVAR(*cachedValueIter);
         return;
     }
 
@@ -633,30 +731,26 @@ void locateVertexBoundary(const Vertex<1>& startVertex, const std::function<Vert
     }
     meanDist /= vertices.size();
 
-    if ((boundaryMapping(startVertex) - meanVertex).normEuclid() > maxDist){
-        return;
-    }
-
-    VertexScoreCalculator<2> calculator(vertices.toVector(), 1.0);
+    VertexScoreCalculator<2> calculator(vertices, 1.0);
     auto F = [&calculator](Vertex<2> x) {
         return calculator.calculateScoreSum(x);
     };
     auto vertex2 = optimizationBFGSBoundary(startVertex, F, boundaryMapping, meanDist, meanDist * 1e-3);
-    cache[std::move(cat(vertices.getIndices(), boundaryIndices))] = boundaryMapping(vertex2);
+    cache.insert(std::move(cat(vertices.getIndices(), boundaryIndices)), boundaryMapping(vertex2));
 }
 
 void scanAreaBoundary(const VirtualGrid<1>& grid, const std::function<Vertex<2>(const Vertex<1>&)> boundaryMapping, const VectorView<Vertex<2>>& vertices, const std::vector<size_t>& boundaryIndices, const double maxPrecision = 1e-2) {
     double treshold = 2.0 * grid.stepSize();
-    VertexScoreCalculator<2> calculator(vertices.toVector(), treshold);
+    VertexScoreCalculator<2> calculator(vertices, treshold);
     for (size_t i = 0; i < grid.nElements +1; ++i){
         auto score = calculator.calculateScore(boundaryMapping(grid.at({i})));
         if (score.neighboringCells.size() > 1){
             auto affectedVertices = vertices.slice(score.neighboringCells);
-            auto refinedGrid = VirtualGrid<1>::withCenterOrigin(grid.at({i}), 11, 1.1*0.5 * grid.stepSize());
             if (affectedVertices.size() == 2) {
                 locateVertexBoundary(grid.at({i}), boundaryMapping, affectedVertices, boundaryIndices);
                 continue;
             }
+            auto refinedGrid = VirtualGrid<1>::withCenterOrigin(grid.at({i}), 10, 0.5 * grid.stepSize());
             if (refinedGrid.stepSize() < maxPrecision){
                 locateVertexBoundary(grid.at({i}), boundaryMapping, affectedVertices, boundaryIndices);
             } else {
@@ -667,13 +761,14 @@ void scanAreaBoundary(const VirtualGrid<1>& grid, const std::function<Vertex<2>(
 }
 
 
-auto buildMeshFromCache(std::unordered_map<std::vector<size_t>, Vertex<2,double>>& cache) {
+auto buildMeshFromCache(Cache& cache) {
     std::unordered_map<size_t, std::unordered_map<size_t,std::vector<std::size_t>>> buildCache;
-    std::vector<std::reference_wrapper<Vertex<2>>> vertices;
+    std::vector<Vertex<2>> vertices;
     vertices.reserve(buildCache.size());
 
     for(auto item : cache) {
-        vertices.emplace_back(cache[item.first]);
+        DBGVAR(item);
+        vertices.emplace_back(item.second);
         for(const auto index : item.first) {
             auto cachedData = buildCache.find(index);
             if (cachedData == buildCache.end()) {
@@ -692,17 +787,13 @@ auto buildMeshFromCache(std::unordered_map<std::vector<size_t>, Vertex<2,double>
             }
         }
     }
-    DBGCHECK;
     DBGVAR(buildCache);
     using MeshType = UnstructuredMesh<2, size_t, double>;
     MeshType mesh;
-    DBGVAR(vertices);
-    for (auto ref : vertices){
-        DBGVAR(ref.get());
-        mesh.getVertices().emplace_back(MeshType::Vertex(mesh.getVertices().size(), ref.get()));
+    for (auto vert : vertices){
+        mesh.getVertices().emplace_back(MeshType::Vertex(mesh.getVertices().size(), vert));
     }
     std::unordered_map<std::vector<size_t>, std::reference_wrapper<MeshType::Edge>> edgeCache;
-    DBGCHECK;
     for (const auto& cellCache : buildCache) {
         if (isBoundaryIndex(cellCache.first)) {
             continue;
@@ -734,31 +825,38 @@ auto buildMeshFromCache(std::unordered_map<std::vector<size_t>, Vertex<2,double>
         }
         mesh.getEdges()[firstEdgeIndex].setNextBElem(lastEdgeIndex, cellIndex);
     }
-    DBGCHECK;
     DBGVAR(mesh.getVertices());
     return mesh;
 }
 
-int main(int argc, char** argv) {
+void testGenerate() {
+    // std::vector<Vertex<2>> vertices = {
+    //     {0.5, 0.5},
+    //     {0.75, 0.5},
+    //     {0.5, 0.75},
+    //     {0.25, 0.5},
+    //     {0.5, 0.25},
 
-    std::vector<Vertex<2>> vertices = {
-        {0.5, 0.5},
-        {0.75, 0.5},
-        {0.5, 0.75},
-        {0.25, 0.5},
-        {0.5, 0.25},
-
-        {0.9, 0.1},
-        {0.9, 0.9},
-        {0.1, 0.1},
-        {0.1, 0.9},
+    //     {0.9, 0.1},
+    //     {0.9, 0.9},
+    //     {0.1, 0.1},
+    //     {0.1, 0.9},
 
     //    {0.2, 0.9},
-    };
-    VirtualGrid<2> grid = VirtualGrid<2>::withCenterOrigin({0.5,0.5}, 10, 0.5);
-    auto verticesView = VectorView<Vertex<2>>::wrap(vertices);
+    // };
+    std::vector<Vertex<2>> vertices;
+    auto wg1 = VirtualGrid<2>::withCenterOrigin({0.5,0.5}, 5, 0.45);
+
+    for (size_t i = 0; i < wg1.nElements +1; ++i){ 
+        for (size_t j = 0; j < wg1.nElements +1; ++j){
+            vertices.emplace_back(wg1.at({i, j}));
+        }
+    }
+
+    VirtualGrid<2> grid = VirtualGrid<2>::withCenterOrigin({0.5,0.5}, 100, 0.5);
+    auto verticesView = wrapToVectorView(vertices);
     scanArea(grid, verticesView);
-    auto gridBoundary = VirtualGrid<1>::withCenterOrigin({0.5}, 10, 0.5);
+    auto gridBoundary = VirtualGrid<1>::withCenterOrigin({0.5}, 100, 0.5);
     auto b1 = [](const Vertex<1>& v){
         return Vertex<2>{v[0], 0.0};
     };
@@ -773,56 +871,78 @@ int main(int argc, char** argv) {
     auto b4 = [](const Vertex<1>& v){
         return Vertex<2>{1.0, v[0]};
     };
-    // makeBoundaryIndex(0)
     scanAreaBoundary(gridBoundary, b1, verticesView, {makeBoundaryIndex(0ul)});
     scanAreaBoundary(gridBoundary, b2, verticesView, {makeBoundaryIndex(1ul)});
     scanAreaBoundary(gridBoundary, b3, verticesView, {makeBoundaryIndex(2ul)});
     scanAreaBoundary(gridBoundary, b4, verticesView, {makeBoundaryIndex(3ul)});
-    VertexScoreCalculator<2> calculator(vertices, 1e-4);
-    cache[cat(calculator.calculateScore(Vertex<2>{0.0,0.0}).neighboringCells, {makeBoundaryIndex(0ul), makeBoundaryIndex(2ul)})] = Vertex<2>{0.0,0.0};//0 2
-    cache[cat(calculator.calculateScore(Vertex<2>{1.0,0.0}).neighboringCells, {makeBoundaryIndex(0ul), makeBoundaryIndex(3ul)})] = Vertex<2>{1.0,0.0};//0 3
-    cache[cat(calculator.calculateScore(Vertex<2>{0.0,1.0}).neighboringCells, {makeBoundaryIndex(1ul), makeBoundaryIndex(2ul)})] = Vertex<2>{0.0,1.0};//1 2
-    cache[cat(calculator.calculateScore(Vertex<2>{1.0,1.0}).neighboringCells, {makeBoundaryIndex(1ul), makeBoundaryIndex(3ul)})] = Vertex<2>{1.0,1.0};//1 3
+    VertexScoreCalculator<2> calculator(verticesView, 1e-4);
+    cache.insert(cat(calculator.calculateScore(Vertex<2>{0.0,0.0}).neighboringCells, {makeBoundaryIndex(0ul), makeBoundaryIndex(2ul)}), Vertex<2>{0.0,0.0});//0 2
+    cache.insert(cat(calculator.calculateScore(Vertex<2>{1.0,0.0}).neighboringCells, {makeBoundaryIndex(0ul), makeBoundaryIndex(3ul)}), Vertex<2>{1.0,0.0});//0 3
+    cache.insert(cat(calculator.calculateScore(Vertex<2>{0.0,1.0}).neighboringCells, {makeBoundaryIndex(1ul), makeBoundaryIndex(2ul)}), Vertex<2>{0.0,1.0});//1 2
+    cache.insert(cat(calculator.calculateScore(Vertex<2>{1.0,1.0}).neighboringCells, {makeBoundaryIndex(1ul), makeBoundaryIndex(3ul)}), Vertex<2>{1.0,1.0});//1 3
     DBGVAR(cache);
+
+    // std::vector<decltype(cache)::iterator> rmVert;
+    // for (auto x = cache.begin(); x != cache.end(); ++x) {
+    //     auto vert = x->second;
+    //     double minDist = (vertices[0] - vert).normEuclid();
+    //     size_t argMin = 0;
+    //     for (size_t i = 1; i < vertices.size(); ++i) {
+    //         auto dist = (vert - vertices[i]).normEuclid();
+    //         if (dist < minDist) {
+    //             minDist = dist;
+    //             argMin = i;
+    //         }
+    //     }
+    //     if (std::find(x->first.begin(), x->first.end(), argMin) == x->first.end()) {
+    //         rmVert.emplace_back(x);
+    //     }
+    // }
+    // for (auto x: rmVert) {
+    //     DBGVAR(*x);
+    //     cache.erase(x);
+    // }
 
     auto mesh = buildMeshFromCache(cache);
     mesh.write("test-mesh.vtk");
-//    auto F = [](Vertex<2> x) {
-//        return std::pow(x.normEuclid(),2);
-//    };
-//    VertexScoreCalculator<2> calculator(slice(vertices, {1,2, 6}), 100);
-//    auto F = [&](Vertex<2> x) {
-//        return calculator.calculateScoreSum(x);
-//    };
-//    Vertex<2> vert = { 0.73, 0.73 };
+}
 
-//    auto x1 = optimizationBFGS(vert, F);
-//    auto x2 = steepestGradient(vert, F);
-//    DBGVAR(x1, F(x1), x2, F(x2));
+void testView() {
+    std::vector<Vertex<2>> vertices = {
+        {0.5, 0.5},
+        {0.75, 0.5},
+        {0.5, 0.75},
+        {0.25, 0.5},
+        {0.5, 0.25},
 
-//    Vector<2> vec = {2, 3};
-//    DBGVAR(
-//       multiply(tenzorMultiply(vec, vec), vec)
-//           );
+        {0.9, 0.1},
+        {0.9, 0.9},
+        {0.1, 0.1},
+        {0.1, 0.9},
 
-//    auto vertSlice = slice(vertices, {1,2, 6});
-//    VertexScoreCalculator<2> calc(vertSlice);
-//    Vertex<2> vert = { 0.73, 0.73 };
-//    Vertex<2> vert2 = { 0.734, 0.734 };
-//    auto x1 = steepestGradient(vert, calc, 0.5);
-//    auto x2 = optimizationDFP({ 0.70, 0.70 }, calc, 0.4);
-//    DBGVAR(x1, x2);
+       {0.2, 0.9},
+    };
+   MeshGenerationProblem<2> mgp;
+   std::string meshPath = "../Meshes/mesh2D.vtk";    // 2D version
+   auto compData = mgp.loadMesh(meshPath);
+   std::string outPath = "../out";
 
-//    auto vertAvg = (vertSlice[0] + vertSlice[1] + vertSlice[2]) / 3.0;
-//    DBGVAR(calc.calculateScoreSum(vertAvg), calc.calculateScore(vertAvg).vertexScore);
+   mgp.calculateFx(compData, vertices);
+   DBGMSG("exporting mesh");
+   mgp.exportMeshAndData(compData, outPath + "/MeshGenerator.vtk");
+}
 
-//    MeshGenerationProblem<2> mgp;
-//    std::string defaultMeshPath = "../Meshes/mesh2D.vtk";    // 2D version
-//    std::string meshPath = argc <= 1 ? defaultMeshPath : argv[1];
-//    auto compData = mgp.loadMesh(meshPath);
-//    std::string outPath = argc <= 2 ? "../out" : argv[2];
+void testCache() {
+    auto vCache = Cache();
+    // { [ 3, 4, 9, 10 ]: [ 0.14, 0.68 ]}, { [ 4, 5, 10, 11 ]: [ 0.14, 0.86 ]} ]
+    vCache.insert({0, 1, 6, 7}, {0.14, 0.14});
+    vCache.insert({1, 2, 7, 8}, {0.14, 0.32});
+    vCache.insert({2, 3, 8, 9}, {0.14, 0.5});
+    auto val = vCache.find({0, 1, 6, 7});
+    DBGVAR(*val, vCache);
+}
 
-//    mgp.calculateFx(compData, vertices);
-//    DBGMSG("exporting mesh");
-//    mgp.exportMeshAndData(compData, outPath + "/MeshGenerator.vtk");
+int main(int argc, char** argv) {
+    testGenerate();
+    // testCache();
 }
