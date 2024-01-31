@@ -77,16 +77,16 @@ static VectorView<T> wrapToVectorView(std::vector<T>& data) {
 }
 
 
-template<size_t Dimension, typename IndexType = size_t, typename RealType = double>
+template<unsigned int Dimension, typename IndexType = size_t, typename RealType = double>
 class VirtualGrid {
 
     using VertexType = Vertex<Dimension, RealType>;
     const VertexType origin;
-    const RealType diameter;
 public:
 
     const IndexType nElements;
-    VirtualGrid(const VertexType& origin, IndexType nElements, RealType diameter): origin(origin), nElements(nElements), diameter(diameter) {}
+    const RealType stepSize;
+    VirtualGrid(const VertexType& origin, IndexType nElements, RealType stepSize): origin(origin), nElements(nElements), stepSize(stepSize) {}
 
     static VirtualGrid withCenterOrigin(const VertexType& origin, IndexType nElements, RealType diameter) {
         VertexType shift;
@@ -94,18 +94,15 @@ public:
             coordinate = diameter;
         }
         VertexType originShifted = origin - shift;
-        return VirtualGrid(originShifted, nElements, diameter);
-    }
-
-    double stepSize() const {
-        return (2 * diameter / nElements);
+        auto stepSize = 2 * diameter / nElements;
+        return VirtualGrid(originShifted, nElements + 1, stepSize);
     }
 
     VertexType at(const std::array<IndexType, Dimension>& indices) const {
         VertexType result = origin;
         for(unsigned int i = 0; i < Dimension; ++i) {
-            assert(indices[i] <= nElements);
-            result[i] += stepSize() * indices[i];
+            assert(indices[i] < nElements);
+            result[i] += stepSize * indices[i];
         }
         return result;
     }
@@ -191,18 +188,14 @@ public:
 
     RealType calculateScoreSum(const VertexType& x) const {
         RealType result = 0.0;
-        std::vector<double> f_xs(vertices.size());
         auto f_x0 = scoreVertex(x, vertices[0]);
         auto maxF = f_x0;
         auto minF = f_x0;
 
-        f_xs.emplace_back();
         for (size_t i = 1; i < vertices.size(); ++i) {
             const auto& vert = vertices[i];
 
             auto f_x = scoreVertex(x, vert);
-            f_xs[i] = f_x;
-
             if(f_x > maxF) {
                 maxF = f_x;
             }
@@ -210,7 +203,7 @@ public:
                 minF = f_x;
             }
         }
-        return std::pow(maxF - minF, 2);
+        return pow(maxF - minF, 2) * maxF;
     }
 };
 
@@ -421,18 +414,87 @@ Vertex<2> optimizationDFP(Vertex<2> x, F&& f, double maxDist = 0.01) {
     }
 }
 
-template<typename F>
-Vertex<2> optimizationBFGS(Vertex<2> x, F&& f, double maxDist = 0.01, const double treshold = 1e-5) {
+template <unsigned int Dim, unsigned int Index>
+constexpr double basisComponent() {
+    return (Index == Dim) ? 1.0 : 0.0;
+}
+
+template <unsigned int Dim>
+constexpr void fillBasis(Vertex<Dim>& basis, std::integral_constant<unsigned int, 0>) {
+    basis[0] = basisComponent<Dim, 0>();
+}
+
+template <unsigned int Dim, unsigned int Index>
+constexpr void fillBasis(Vertex<Dim>& basis, std::integral_constant<unsigned int, Index>) {
+    fillBasis<Dim>(basis, std::integral_constant<unsigned int, Index - 1>());
+    basis[Index] = basisComponent<Dim, Index>();
+}
+
+template <unsigned int Dim, unsigned int index>
+constexpr Vertex<Dim> e() {
+    Vertex<Dim> basis {};
+    fillBasis<Dim>(basis, std::integral_constant<unsigned int, Dim - 1>());
+    return basis;
+}
+
+
+template <unsigned int Index, unsigned int Dim, typename F>
+double calculateGradientComponent(F&& f, const Vertex<Dim>& x, double delta) {
+    Vertex<Dim> deltaVec = e<Dim, Index>() * delta;
+    return (f(x + deltaVec) - f(x - deltaVec)) / (2 * delta);
+}
+
+
+template <typename F, unsigned int Dim>
+constexpr void calculateGradient(Vector<Dim>& result, F&& f, const Vertex<Dim>& x, double delta, std::integral_constant<unsigned int, 0>) {
+    result[0] = calculateGradientComponent<0>(f, x, delta);
+}
+template <typename F, unsigned int Dim, unsigned int Index = 0>
+constexpr void calculateGradient(Vector<Dim>& result, F&& f, const Vertex<Dim>& x, double delta, std::integral_constant<unsigned int, Index>) {
+    result[Index] = calculateGradientComponent<Index>(f, x, delta);
+    calculateGradient(result, f, x, delta, std::integral_constant<unsigned int, Index - 1>());
+}
+
+
+template <unsigned int Dim, typename F>
+Vector<Dim> calculateGradient(F&& f, const Vertex<Dim>& x, double delta = 1e-5) {
+    Vector<Dim> gradient;
+
+    calculateGradient(gradient, f, x, delta, std::integral_constant<unsigned int, Dim - 1>());
+
+    return gradient;
+}
+
+
+template <unsigned int Dim>
+void unitMatrix(Vector<Dim,Vector<Dim>>& matrix, std::integral_constant<unsigned int, 0>) {
+    matrix[0] = e<Dim, 0>();
+}
+
+template <unsigned int Dim, unsigned int Index>
+void unitMatrix(Vector<Dim,Vector<Dim>>& matrix, std::integral_constant<unsigned int, Index>) {
+    unitMatrix(matrix, std::integral_constant<unsigned int, Index -1>());
+    matrix[Index] = e<Dim, Index>();
+}
+
+
+template <unsigned int Dim>
+Vector<Dim,Vector<Dim>> unitMatrix() {
+    Vector<Dim,Vector<Dim>> matrix;
+    unitMatrix(matrix, std::integral_constant<unsigned int, Dim - 1>());
+    return matrix;
+}
+
+template<unsigned int Dim, typename F>
+Vertex<Dim> optimizationBFGS(Vertex<Dim> x, F&& f, double maxDist = 0.01, const double treshold = 1e-5) {
     double delta = maxDist * 1e-3;
     double invDelta = 1.0 / (2*delta);
 
     auto x_i = x;
 
     double fx = f(x);
-    double df_dx = (f(x_i-Vertex<2>({-delta, 0})) - f(x_i-Vertex<2>({delta, 0}))) * invDelta;
-    double df_dy = (f(x_i-Vertex<2>({0, -delta})) - f(x_i-Vertex<2>({0, delta}))) * invDelta;
-    Vector<2> g_i = {df_dx, df_dy};
-    Vector<2,Vector<2>> S {{1,0},{0,1}};
+    Vector<Dim> g_i = calculateGradient(f, x_i, delta);
+    auto S = unitMatrix<Dim>();
     int cnt = 0;
     while(true){
         if(++cnt > 100 || g_i.normEuclid() < treshold) {
@@ -443,7 +505,8 @@ Vertex<2> optimizationBFGS(Vertex<2> x, F&& f, double maxDist = 0.01, const doub
 
         double gamma = maxDist / d.normEuclid();
         double auxFx = 0;
-        Vertex<2> x_i1;
+        
+        Vertex<Dim> x_i1;
         // line search
         do {
             x_i1 = x_i + gamma * d;
@@ -451,9 +514,7 @@ Vertex<2> optimizationBFGS(Vertex<2> x, F&& f, double maxDist = 0.01, const doub
             gamma *= 0.7;
         } while (auxFx > fx);
         fx = auxFx;
-        double df_dx = (f(x_i1-Vertex<2>({-delta, 0})) - f(x_i1-Vertex<2>({delta, 0}))) * invDelta;
-        double df_dy = (f(x_i1-Vertex<2>({0, -delta})) - f(x_i1-Vertex<2>({0, delta}))) * invDelta;
-        auto g_i1 = Vector<2>{df_dx, df_dy};
+        auto g_i1 = calculateGradient(f, x_i1, delta);
         auto p = x_i1 - x_i;
         auto q = g_i1 - g_i;
         x_i = x_i1;
@@ -593,7 +654,8 @@ bool isSubset(const std::vector<T>& set1, const std::vector<T>& set2) {
     return intersection.size() == set1.size();
 }
 
-void locateVertex(const Vertex<2>& startVertex, const VectorView<Vertex<2>>& vertices, const VectorView<Vertex<2>>& enclosingVertices) {
+template <unsigned int Dim>
+void locateVertex(const Vertex<Dim>& startVertex, const VectorView<Vertex<Dim>>& vertices, const VectorView<Vertex<Dim>>& enclosingVertices) {
 
     auto cachedValueIter = cache.find(vertices.getIndices());
     if (cachedValueIter != cache.end()) {
@@ -616,10 +678,6 @@ void locateVertex(const Vertex<2>& startVertex, const VectorView<Vertex<2>>& ver
     }
     meanDist /= vertices.size();
 
-    if ((startVertex - meanVertex).normEuclid() > maxDist){
-        return;
-    }
-
     VertexScoreCalculator<2> calculator(vertices, 1.0);
     auto F = [&calculator](Vertex<2> x) {
         return calculator.calculateScoreSum(x);
@@ -640,71 +698,35 @@ std::vector<T> cat(std::vector<T> v1, const std::vector<T>& v2) {
     return v1;
 }
 
-void scanArea(const VirtualGrid<2>& grid, const VectorView<Vertex<2>>& vertices, const double maxPrecision = 1e-2) {
-    double treshold = 2.0 * (1.414213562373095) * grid.stepSize();
-    VertexScoreCalculator<2> calculator(vertices, treshold);
-    for (size_t i = 0; i < grid.nElements +1; ++i){
-        for (size_t j = 0; j < grid.nElements +1; ++j){
-            auto neighboringCells = calculator.calculateNeighbors(grid.at({i,j}), treshold);
-            if (neighboringCells.size() > 2){
-                auto affectedVertices = vertices.slice(neighboringCells);
-                auto refinedGrid = VirtualGrid<2>::withCenterOrigin(grid.at({i,j}), 10, 0.5 * grid.stepSize());
-                if (affectedVertices.size() == 3) {
-                    locateVertex(grid.at({i,j}), affectedVertices, vertices);
-                    continue;
-                }
-                if (refinedGrid.stepSize() < maxPrecision){
-                    locateVertex(grid.at({i,j}), affectedVertices, vertices);
+template <unsigned int Dim>
+void scanArea(const VirtualGrid<Dim>& grid, const VectorView<Vertex<Dim>>& vertices, const double maxPrecision = 1e-2) {
+    double treshold = 2.0 * (1.414213562373095) * grid.stepSize;
+    VertexScoreCalculator<Dim> calculator(vertices, treshold);
+    std::array<size_t, Dim> indices {};
+    for (size_t n = 0; n < pow(grid.nElements, Dim); ++n) {
+        auto neighboringCells = calculator.calculateNeighbors(grid.at(indices), treshold);
+        if (neighboringCells.size() > Dim){
+            DBGVAR(grid.at(indices), neighboringCells, indices);
+            auto affectedVertices = vertices.slice(neighboringCells);
+            if (affectedVertices.size() == Dim + 1) {
+                locateVertex(grid.at(indices), affectedVertices, vertices);
+            } else {
+                auto refinedGrid = VirtualGrid<2>::withCenterOrigin(grid.at(indices), 10, 0.5 * grid.stepSize);
+                if (refinedGrid.stepSize < maxPrecision){
+                    locateVertex(grid.at(indices), affectedVertices, vertices);
                 } else {
                     scanArea(refinedGrid, vertices, maxPrecision);
                 }
             }
         }
-    }
-}
 
-
-template<typename F>
-Vertex<1> optimizationBFGSBoundary(Vertex<1> x, F&& f, const std::function<Vertex<2>(const Vertex<1>&)> boundaryMapping, double maxDist = 0.01, const double treshold = 1e-5) {
-    double delta = maxDist * 1e-3;
-    double invDelta = 1.0 / (2*delta);
-
-    auto x_i = x;
-
-    double fx = f(boundaryMapping(x));
-    double df_dx = (f(boundaryMapping(x_i-Vertex<1>({-delta}))) - f(boundaryMapping(x_i-Vertex<1>({delta})))) * invDelta;
-    Vector<1> g_i = {df_dx};
-    Vector<1,Vector<1>> S {{1}};
-    int cnt = 0;
-    while(true){
-        if(++cnt > 100 || g_i.normEuclid() < treshold) {
-            return x_i;
+        indices[0]++;
+        for(size_t i = 0; i < Dim - 1; ++i){
+            if(indices[i] == grid.nElements) {
+                indices[i] = 0;
+                indices[i+1]++;
+            }
         }
-        auto d = -1.0 * multiply(S,  g_i);
-
-        double gamma = maxDist / d.normEuclid();
-        double auxFx = 0;
-        Vertex<1> x_i1;
-        // line search
-        do {
-            x_i1 = x_i + gamma * d;
-            auxFx = f(boundaryMapping(x_i1));
-            gamma *= 0.7;
-        } while (auxFx > fx);
-        fx = auxFx;
-        double df_dx = (f(boundaryMapping(x_i1-Vertex<1>({-delta}))) - f(boundaryMapping(x_i1-Vertex<1>({delta})))) * invDelta;
-        auto g_i1 = Vector<1>{df_dx};
-        auto p = x_i1 - x_i;
-        auto q = g_i1 - g_i;
-        x_i = x_i1;
-        g_i = g_i1;
-        auto p_q = multiply(p,q);
-        if (abs(p_q) < 1e-30) {
-            return x_i;
-        }
-        auto S_q = multiply(S,q);
-        auto deltaS = (tenzorMultiply(p, S_q) + tenzorMultiply(S_q, p) - (1 + (multiply(q, S_q)/p_q)) * tenzorMultiply(p,p)) / p_q;
-        S -= deltaS;
     }
 }
 
@@ -732,17 +754,20 @@ void locateVertexBoundary(const Vertex<1>& startVertex, const std::function<Vert
     meanDist /= vertices.size();
 
     VertexScoreCalculator<2> calculator(vertices, 1.0);
-    auto F = [&calculator](Vertex<2> x) {
-        return calculator.calculateScoreSum(x);
+    
+    auto F = [calculator, boundaryMapping](const Vertex<1>& x) {
+        return calculator.calculateScoreSum(boundaryMapping(x));
     };
-    auto vertex2 = optimizationBFGSBoundary(startVertex, F, boundaryMapping, meanDist, meanDist * 1e-3);
+    
+    auto vertex2 = optimizationBFGS(startVertex, F, meanDist, meanDist * 1e-3);
+    
     cache.insert(std::move(cat(vertices.getIndices(), boundaryIndices)), boundaryMapping(vertex2));
 }
 
 void scanAreaBoundary(const VirtualGrid<1>& grid, const std::function<Vertex<2>(const Vertex<1>&)> boundaryMapping, const VectorView<Vertex<2>>& vertices, const std::vector<size_t>& boundaryIndices, const double maxPrecision = 1e-2) {
-    double treshold = 2.0 * grid.stepSize();
+    double treshold = 2.0 * grid.stepSize;
     VertexScoreCalculator<2> calculator(vertices, treshold);
-    for (size_t i = 0; i < grid.nElements +1; ++i){
+    for (size_t i = 0; i < grid.nElements; ++i){
         auto score = calculator.calculateScore(boundaryMapping(grid.at({i})));
         if (score.neighboringCells.size() > 1){
             auto affectedVertices = vertices.slice(score.neighboringCells);
@@ -750,8 +775,8 @@ void scanAreaBoundary(const VirtualGrid<1>& grid, const std::function<Vertex<2>(
                 locateVertexBoundary(grid.at({i}), boundaryMapping, affectedVertices, boundaryIndices);
                 continue;
             }
-            auto refinedGrid = VirtualGrid<1>::withCenterOrigin(grid.at({i}), 10, 0.5 * grid.stepSize());
-            if (refinedGrid.stepSize() < maxPrecision){
+            auto refinedGrid = VirtualGrid<1>::withCenterOrigin(grid.at({i}), 10, 0.5 * grid.stepSize);
+            if (refinedGrid.stepSize < maxPrecision){
                 locateVertexBoundary(grid.at({i}), boundaryMapping, affectedVertices, boundaryIndices);
             } else {
                 scanAreaBoundary(refinedGrid, boundaryMapping, vertices, boundaryIndices, maxPrecision);
@@ -845,10 +870,10 @@ void testGenerate() {
     //    {0.2, 0.9},
     // };
     std::vector<Vertex<2>> vertices;
-    auto wg1 = VirtualGrid<2>::withCenterOrigin({0.5,0.5}, 5, 0.45);
+    auto wg1 = VirtualGrid<2>::withCenterOrigin({0.5009,0.5015}, 5, 0.45);
 
-    for (size_t i = 0; i < wg1.nElements +1; ++i){ 
-        for (size_t j = 0; j < wg1.nElements +1; ++j){
+    for (size_t i = 0; i < wg1.nElements; ++i){ 
+        for (size_t j = 0; j < wg1.nElements; ++j){
             vertices.emplace_back(wg1.at({i, j}));
         }
     }
