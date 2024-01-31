@@ -77,12 +77,42 @@ static VectorView<T> wrapToVectorView(std::vector<T>& data) {
 }
 
 
+
 template<unsigned int Dimension, typename IndexType = size_t, typename RealType = double>
 class VirtualGrid {
-
+public:
     using VertexType = Vertex<Dimension, RealType>;
     const VertexType origin;
-public:
+
+    class Iterator {
+        const VirtualGrid& virtualGrid;
+        std::array<IndexType, Dimension> indices;
+        public:
+
+        Iterator(const VirtualGrid& virtualGrid, std::array<IndexType, Dimension> indices = {}): virtualGrid(virtualGrid), indices(indices) {}
+
+        void operator++() {
+            indices[0]++;
+            for(size_t i = 0; i < Dimension - 1; ++i){
+                if(indices[i] == virtualGrid.nElements) {
+                    indices[i] = 0;
+                    indices[i+1]++;
+                }
+            }
+        }
+
+        VertexType operator*(){
+            return virtualGrid.at(indices);
+        }
+
+        bool operator==(const Iterator& other) {
+            return indices == other.indices;
+        }
+
+        bool operator!=(const Iterator& other) {
+            return indices != other.indices;
+        }
+    };
 
     const IndexType nElements;
     const RealType stepSize;
@@ -96,6 +126,16 @@ public:
         VertexType originShifted = origin - shift;
         auto stepSize = 2 * diameter / nElements;
         return VirtualGrid(originShifted, nElements + 1, stepSize);
+    }
+
+    Iterator begin() const {
+        return Iterator(*this);
+    }
+
+    Iterator end() const {
+        std::array<IndexType, Dimension> indices{};
+        indices.back() = nElements;
+        return Iterator(*this, indices);
     }
 
     VertexType at(const std::array<IndexType, Dimension>& indices) const {
@@ -498,7 +538,7 @@ Vertex<Dim> optimizationBFGS(Vertex<Dim> x, F&& f, double maxDist = 0.01, const 
     int cnt = 0;
     while(true){
         if(++cnt > 100 || g_i.normEuclid() < treshold) {
-            DBGVAR(g_i.normEuclid(), cnt);
+            // DBGVAR(g_i.normEuclid(), cnt);
             return x_i;
         }
         auto d = -1.0 * multiply(S,  g_i);
@@ -689,7 +729,7 @@ void locateVertex(const Vertex<Dim>& startVertex, const VectorView<Vertex<Dim>>&
     if (isSubset(vertices.getIndices(), actualVertices.getIndices())){
         cache.insert(neighbors, vertex2);
     }
-    DBGVAR(startVertex, meanVertex, calculator.calculateScore(vertex2), vertex2, vertices.getIndices(), vertices, actualVertices.getIndices());
+    // DBGVAR(startVertex, meanVertex, calculator.calculateScore(vertex2), vertex2, vertices.getIndices(), vertices, actualVertices.getIndices());
 }
 
 template<typename T>
@@ -703,37 +743,38 @@ void scanArea(const VirtualGrid<Dim>& grid, const VectorView<Vertex<Dim>>& verti
     double treshold = 2.0 * (1.414213562373095) * grid.stepSize;
     VertexScoreCalculator<Dim> calculator(vertices, treshold);
     std::array<size_t, Dim> indices {};
-    for (size_t n = 0; n < pow(grid.nElements, Dim); ++n) {
-        auto neighboringCells = calculator.calculateNeighbors(grid.at(indices), treshold);
+    for(auto vertex : grid) {
+        // auto vertex = grid.at(indices);
+    // for (size_t n = 0; n < pow(grid.nElements, Dim); ++n) {
+        auto neighboringCells = calculator.calculateNeighbors(vertex, treshold);
         if (neighboringCells.size() > Dim){
-            DBGVAR(grid.at(indices), neighboringCells, indices);
             auto affectedVertices = vertices.slice(neighboringCells);
             if (affectedVertices.size() == Dim + 1) {
-                locateVertex(grid.at(indices), affectedVertices, vertices);
+                locateVertex(vertex, affectedVertices, vertices);
             } else {
-                auto refinedGrid = VirtualGrid<2>::withCenterOrigin(grid.at(indices), 10, 0.5 * grid.stepSize);
+                auto refinedGrid = VirtualGrid<2>::withCenterOrigin(vertex, 10, 0.5 * grid.stepSize);
                 if (refinedGrid.stepSize < maxPrecision){
-                    locateVertex(grid.at(indices), affectedVertices, vertices);
+                    locateVertex(vertex, affectedVertices, vertices);
                 } else {
                     scanArea(refinedGrid, vertices, maxPrecision);
                 }
             }
         }
 
-        indices[0]++;
-        for(size_t i = 0; i < Dim - 1; ++i){
-            if(indices[i] == grid.nElements) {
-                indices[i] = 0;
-                indices[i+1]++;
-            }
-        }
+        // indices[0]++;
+        // for(size_t i = 0; i < Dim - 1; ++i){
+        //     if(indices[i] == grid.nElements) {
+        //         indices[i] = 0;
+        //         indices[i+1]++;
+        //     }
+        // }
     }
 }
 
 void locateVertexBoundary(const Vertex<1>& startVertex, const std::function<Vertex<2>(const Vertex<1>&)> boundaryMapping, const VectorView<Vertex<2>>& vertices, const std::vector<size_t>& boundaryIndices) {
     auto cachedValueIter = cache.find(cat(vertices.getIndices(), boundaryIndices));
     if (cachedValueIter != cache.end()) {
-        DBGVAR(*cachedValueIter);
+        // DBGVAR(*cachedValueIter);
         return;
     }
 
@@ -792,7 +833,7 @@ auto buildMeshFromCache(Cache& cache) {
     vertices.reserve(buildCache.size());
 
     for(auto item : cache) {
-        DBGVAR(item);
+        // DBGVAR(item);
         vertices.emplace_back(item.second);
         for(const auto index : item.first) {
             auto cachedData = buildCache.find(index);
