@@ -14,7 +14,14 @@ add_executable(GTMesh-example src/problems/heat_conduction.cpp)
 target_sources(GTMesh-example PRIVATE src/solvers/RKMSolver.hpp)
 
 add_executable(GTMesh-generator src/problems/MeshGenerator.cpp)
-target_sources(GTMesh-generator PRIVATE src/solvers/RKMSolver.hpp)
+target_sources(GTMesh-generator PRIVATE 
+    src/solvers/RKMSolver.hpp
+    src/lib/Gradient.hpp
+    src/lib/NumericHelpers.hpp
+    src/lib/VectorView.hpp
+    src/lib/VirtualGrid.hpp
+    src/lib/optimisation.hpp
+)
 
 find_package(OpenMP REQUIRED)
 add_executable(GTMesh-example-omp_parallel_graph src/problems/heat_conduction_omp_graph.cpp)
