@@ -188,6 +188,7 @@ template<unsigned int Dim> class Cache {
     std::vector<cacheElementT> cacheData;
     std::unordered_map<std::size_t, std::set<std::size_t> > cacheMap;
     static constexpr auto invalidOffset = std::numeric_limits<size_t>::max();
+
 public:
     void insert(const std::vector<std::size_t>& indices, Vertex<Dim> vertex) {
         auto newIndex = cacheData.size();
@@ -221,7 +222,7 @@ public:
 
     const auto find(const std::vector<std::size_t>& indices) const {
         std::set<std::size_t> result;
-        auto cachedSets = std::vector<std::pair<std::set<size_t>::iterator, std::set<size_t>::iterator>>();
+        auto cachedSets = std::vector<std::pair<std::set<size_t>::iterator, std::set<size_t>::iterator> >();
         cachedSets.reserve(indices.size());
 
         for (std::size_t index : indices) {
@@ -236,15 +237,15 @@ public:
 
         bool process = true;
         // calculate intersection of multiple sets at once
-        while(process) {
+        while (process) {
             auto minValue = std::numeric_limits<size_t>::max();
-            for(auto& range: cachedSets) {
+            for (auto& range : cachedSets) {
                 if (minValue > *range.first) {
                     minValue = *range.first;
                 }
             }
             bool addValue = true;
-            for(auto& range: cachedSets) {
+            for (auto& range : cachedSets) {
                 if (minValue != *range.first) {
                     addValue = false;
                 } else {
@@ -260,7 +261,7 @@ public:
         }
         if (result.size() == 0) {
             return FindResult{cacheData.end(), true};
-        } else if(*result.begin() == invalidOffset) {
+        } else if (*result.begin() == invalidOffset) {
             return FindResult{cacheData.end(), false};
         } else {
             return FindResult{cacheData.begin() + *result.begin(), true};
@@ -281,7 +282,7 @@ public:
     }
 
     bool contains(const std::vector<std::size_t>& indices) const {
-        auto cachedSets = std::vector<std::pair<std::set<size_t>::iterator, std::set<size_t>::iterator>>();
+        auto cachedSets = std::vector<std::pair<std::set<size_t>::iterator, std::set<size_t>::iterator> >();
         cachedSets.reserve(indices.size());
 
         for (std::size_t index : indices) {
@@ -296,15 +297,15 @@ public:
 
         bool process = true;
         // calculate intersection of multiple sets at once
-        while(process) {
+        while (process) {
             auto minValue = std::numeric_limits<size_t>::max();
-            for(auto& range: cachedSets) {
+            for (auto& range : cachedSets) {
                 if (minValue > *range.first) {
                     minValue = *range.first;
                 }
             }
             bool addValue = true;
-            for(auto& range: cachedSets) {
+            for (auto& range : cachedSets) {
                 if (minValue != *range.first) {
                     addValue = false;
                 } else {
@@ -373,7 +374,6 @@ void scanArea(const VirtualGrid<GridDim>& grid, const VectorView<Vertex<ProblemD
         auto neighboringCells = calculateNeighbors(vertices, boundaryMapping(vertex), treshold);
         if (neighboringCells.size() > GridDim &&
             !cache.contains(virtualBoundaryCells.empty() ? neighboringCells : cat(neighboringCells, virtualBoundaryCells))) {
-
             if (neighboringCells.size() == GridDim + 1 || grid.stepSize < maxPrecision) {
                 auto affectedVertices = vertices.slice(neighboringCells);
                 auto lossFunction = [&boundaryMapping, &affectedVertices](const Vertex<GridDim>& x) {
