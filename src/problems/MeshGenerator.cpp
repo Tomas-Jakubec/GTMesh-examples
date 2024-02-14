@@ -187,7 +187,7 @@ template<unsigned int Dim> class Cache {
     using cacheElementT = std::pair<std::vector<std::size_t>, Vertex<Dim> >;
     std::vector<cacheElementT> cacheData;
     std::unordered_map<std::size_t, std::set<std::size_t> > cacheMap;
-
+    static constexpr auto invalidOffset = std::numeric_limits<size_t>::max();
 public:
     void insert(const std::vector<std::size_t>& indices, Vertex<Dim> vertex) {
         auto newIndex = cacheData.size();
@@ -207,32 +207,64 @@ public:
         }
     }
 
-    auto find(const std::vector<std::size_t>& indices) const {
-        auto cachedValueIter = cacheMap.find(indices[0]);
-        std::set<std::size_t> result;
-        if (cachedValueIter != cacheMap.end()) {
-            result = cachedValueIter->second;
-        } else {
-            return cacheData.end();
+    void insertInvalid(std::vector<std::size_t>&& indices) {
+        for (const auto index : indices) {
+            auto& cachedItems = getOrPut(cacheMap, index, std::set<std::size_t>());
+            cachedItems.emplace(invalidOffset);
         }
-        for (std::size_t i = 1; i < indices.size(); ++i) {
-            auto indexValIter = cacheMap.find(indices[i]);
+    }
+
+    struct FindResult {
+        const typename std::vector<cacheElementT>::const_iterator iter;
+        bool valid;
+    };
+
+    const auto find(const std::vector<std::size_t>& indices) const {
+        std::set<std::size_t> result;
+        auto cachedSets = std::vector<std::pair<std::set<size_t>::iterator, std::set<size_t>::iterator>>();
+        cachedSets.reserve(indices.size());
+
+        for (std::size_t index : indices) {
+            auto indexValIter = cacheMap.find(index);
             if (indexValIter != cacheMap.end()) {
-                auto& indexSet = indexValIter->second;
-                std::set<std::size_t> resultIntersection;
-                std::set_intersection(result.begin(), result.end(), indexSet.begin(), indexSet.end(),
-                                      std::inserter(resultIntersection, resultIntersection.begin()));
-                result = resultIntersection;
+                auto& cachedOffests = indexValIter->second;
+                cachedSets.emplace_back(std::make_pair(cachedOffests.begin(), cachedOffests.end()));
             } else {
-                return cacheData.end();
+                return FindResult{cacheData.end(), true};
             }
         }
-        switch (result.size()) {
-        case 0:
-            return cacheData.end();
-        default:
-            return cacheData.begin() + *result.begin();
-        };
+
+        bool process = true;
+        // calculate intersection of multiple sets at once
+        while(process) {
+            auto minValue = std::numeric_limits<size_t>::max();
+            for(auto& range: cachedSets) {
+                if (minValue > *range.first) {
+                    minValue = *range.first;
+                }
+            }
+            bool addValue = true;
+            for(auto& range: cachedSets) {
+                if (minValue != *range.first) {
+                    addValue = false;
+                } else {
+                    ++range.first;
+                    if (range.first == range.second) {
+                        process = false;
+                    }
+                }
+            }
+            if (addValue) {
+                result.insert(minValue);
+            }
+        }
+        if (result.size() == 0) {
+            return FindResult{cacheData.end(), true};
+        } else if(*result.begin() == invalidOffset) {
+            return FindResult{cacheData.end(), false};
+        } else {
+            return FindResult{cacheData.begin() + *result.begin(), true};
+        }
     }
 
     void consolide() {
@@ -249,7 +281,44 @@ public:
     }
 
     bool contains(const std::vector<std::size_t>& indices) const {
-        return find(indices) != end();
+        auto cachedSets = std::vector<std::pair<std::set<size_t>::iterator, std::set<size_t>::iterator>>();
+        cachedSets.reserve(indices.size());
+
+        for (std::size_t index : indices) {
+            auto indexValIter = cacheMap.find(index);
+            if (indexValIter != cacheMap.end()) {
+                auto& cachedOffests = indexValIter->second;
+                cachedSets.emplace_back(std::make_pair(cachedOffests.begin(), cachedOffests.end()));
+            } else {
+                return false;
+            }
+        }
+
+        bool process = true;
+        // calculate intersection of multiple sets at once
+        while(process) {
+            auto minValue = std::numeric_limits<size_t>::max();
+            for(auto& range: cachedSets) {
+                if (minValue > *range.first) {
+                    minValue = *range.first;
+                }
+            }
+            bool addValue = true;
+            for(auto& range: cachedSets) {
+                if (minValue != *range.first) {
+                    addValue = false;
+                } else {
+                    ++range.first;
+                    if (range.first == range.second) {
+                        process = false;
+                    }
+                }
+            }
+            if (addValue) {
+                return true;
+            }
+        }
+        return false;
     }
 
     auto begin() {
@@ -269,11 +338,11 @@ public:
     }
 
     auto at(const std::vector<std::size_t>& indices) {
-        auto iter = find(indices);
-        if (iter == end()) {
+        auto findResult = find(indices);
+        if (findResult.valid || findResult.iter == end()) {
             throw std::out_of_range("Indices not found in the cache!");
         }
-        return *iter;
+        return *findResult.iter;
     }
 };
 
@@ -304,6 +373,7 @@ void scanArea(const VirtualGrid<GridDim>& grid, const VectorView<Vertex<ProblemD
         auto neighboringCells = calculateNeighbors(vertices, boundaryMapping(vertex), treshold);
         if (neighboringCells.size() > GridDim &&
             !cache.contains(virtualBoundaryCells.empty() ? neighboringCells : cat(neighboringCells, virtualBoundaryCells))) {
+
             if (neighboringCells.size() == GridDim + 1 || grid.stepSize < maxPrecision) {
                 auto affectedVertices = vertices.slice(neighboringCells);
                 auto lossFunction = [&boundaryMapping, &affectedVertices](const Vertex<GridDim>& x) {
@@ -504,7 +574,7 @@ void testGenerate() {
     //    {0.2, 0.9},
     // };
 
-    auto vertices = generate_hexagonal_grid(7, 5);
+    auto vertices = generate_hexagonal_grid(50, 50);
 
     VirtualGrid<2> grid = VirtualGrid<2>::withCenterOrigin({0.5, 0.5}, 100, 0.5);
     auto area = Square({0.5, 0.5}, 1.0);
@@ -570,7 +640,7 @@ void testCache() {
     vCache.insert({1, 2, 7, 8}, {0.14, 0.32});
     vCache.insert({2, 3, 8, 9}, {0.14, 0.5});
     auto val = vCache.find({0, 1, 6, 7});
-    DBGVAR(*val, vCache);
+    DBGVAR(*val.iter, vCache);
 }
 
 void testGradientCalculation() {
