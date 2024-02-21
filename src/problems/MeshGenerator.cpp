@@ -537,26 +537,237 @@ std::vector<Vertex<2> > generateRandomVertices(int nElements) {
     return vertices;
 }
 
-class Square {
-private:
-    Vertex<2, double> center;
-    double sideLength;
-    Vertex<2, double> min;
-    Vertex<2, double> max;
-
+template<unsigned ShapeDimension, unsigned SpaceDimension>
+class Shape {
 public:
-    // Constructor
-    Square(Vertex<2, double> center, double sideLength) : center(center), sideLength(sideLength) {
-        double halfSide = sideLength / 2.0;
-        min = center - Vertex<2, double>{halfSide, halfSide};
-        max = center + Vertex<2, double>{halfSide, halfSide};
+    using BoundaryShapeType = Shape<ShapeDimension - 1, SpaceDimension>;
+
+    virtual bool contains(const Vertex<SpaceDimension>& vertex) const = 0;
+
+    virtual std::vector<std::shared_ptr<BoundaryShapeType>> getBoundary() const = 0;
+
+    virtual bool operator==(const Shape<ShapeDimension, SpaceDimension>&) const = 0;
+
+    bool operator!=(const Shape<ShapeDimension, SpaceDimension>& other) const {
+        return ! *this == other;
     }
 
-    // Method to check if a point is inside the square
-    bool contains(const Vertex<2, double>& point) const {
-        return (point[0] >= min[0] && point[0] <= max[0] && point[1] >= min[1] && point[1] <= max[1]);
+    virtual Vertex<SpaceDimension> map(const Vertex<ShapeDimension>& vert) const = 0;
+
+    virtual std::ostream& printTo(std::ostream& ost) const = 0;
+
+    template<typename TDerived>
+    static std::shared_ptr<BoundaryShapeType> castToBase(std::shared_ptr<TDerived>&& ptr) {
+        std::shared_ptr<BoundaryShapeType> result = std::move(ptr);
+        return result;
     }
 };
+
+template<unsigned ShapeDimension, unsigned SpaceDimension>
+std::ostream& operator<<(std::ostream& ost, const Shape<ShapeDimension, SpaceDimension>& object) {
+    object.printTo(ost);
+    return ost;
+}
+
+template<unsigned Dimension, typename RealType>
+std::ostream& operator<<(std::ostream& ost, const Vertex<Dimension, RealType>& vert) {
+    PrintIndexable::print(ost, vert);
+    return ost;
+}
+
+template <unsigned SpaceDimension>
+class Shape<0, SpaceDimension>: public Vertex<SpaceDimension> {
+public:
+    constexpr Shape(): Vertex<SpaceDimension>() {}
+    constexpr Shape(const Vertex<SpaceDimension>& vert): Vertex<SpaceDimension>(vert) {}
+    constexpr Shape(const Shape& vert): Vertex<SpaceDimension>(vert) {}
+};
+
+
+template<unsigned ShapeDimension, unsigned SpaceDimension>
+class Translation: public Shape<ShapeDimension, SpaceDimension> {
+    Vector<SpaceDimension> translation;
+    std::shared_ptr<Shape<ShapeDimension, SpaceDimension>> shape;
+    public:
+    
+    using BaseType = Shape<ShapeDimension, SpaceDimension>;
+    using BoundaryShapeType = typename BaseType::BoundaryShapeType;
+
+    using BaseType::castToBase;
+
+    Translation(Vector<SpaceDimension> translation, std::shared_ptr<Shape<ShapeDimension, SpaceDimension>> shape): translation(translation), shape(shape) {}
+
+    
+    virtual ~Translation() = default;
+
+    // Method to check if a point is inside the line
+    virtual bool contains(const Vertex<SpaceDimension, double>& point) const override {
+        return shape->contains(point - translation);
+    }
+
+     virtual std::vector<std::shared_ptr<BoundaryShapeType>> getBoundary() const {
+        std::vector<std::shared_ptr<BoundaryShapeType>> result;
+        // for (auto&& b : shape->getBoundary()) {
+        //     result.emplace_back(castToBase(std::make_shared<Translation<ShapeDimension -1, SpaceDimension>>(translation, std::move(b))));
+        // }
+        return result;
+     }
+
+    virtual bool operator==(const Shape<ShapeDimension, SpaceDimension>& other) const {
+        if (typeid(other) == typeid(Translation<ShapeDimension, SpaceDimension>)){
+            const auto& otherCasted = dynamic_cast<const Translation<ShapeDimension, SpaceDimension>&>(other);
+            return (otherCasted.translation == this->translation && *(otherCasted.shape) == *(this->shape));
+        }
+        return false;
+    }
+
+     virtual Vertex<SpaceDimension> map(const Vertex<ShapeDimension>& vert) const {
+        return shape->map(vert) + translation;
+     }
+
+    virtual std::ostream& printTo(std::ostream& ost) const {
+        return ost << "Tanslation<" << SpaceDimension << ">( " << translation << ", " << *shape << ")";
+    }
+};
+
+template<unsigned ShapeDimension, unsigned SpaceDimension>
+class LinearTransformation: public Shape<ShapeDimension, SpaceDimension> {
+    Vector<SpaceDimension,Vector<SpaceDimension>> matrix;
+    Vector<SpaceDimension,Vector<SpaceDimension>> matrixInv;
+    std::shared_ptr<Shape<ShapeDimension, SpaceDimension>> shape;
+    public:
+    
+    using BaseType = Shape<ShapeDimension, SpaceDimension>;
+    using BoundaryShapeType = typename BaseType::BoundaryShapeType;
+
+    LinearTransformation(Vector<SpaceDimension,Vector<SpaceDimension>> matrix, std::shared_ptr<Shape<ShapeDimension, SpaceDimension>> shape): matrix(matrix), shape(shape) {
+        matrixInv = calculateInvMatrix(matrix);
+    }
+
+    
+    virtual ~LinearTransformation() = default;
+
+    // Method to check if a point is inside the line
+    virtual bool contains(const Vertex<SpaceDimension, double>& point) const override {
+        return shape->contains(multiply(matrixInv, point));
+    }
+
+     virtual std::vector<std::shared_ptr<BoundaryShapeType>> getBoundary() const {
+        std::vector<std::shared_ptr<BoundaryShapeType>> result;
+        // for (auto b : shape->getBoundary()) {
+        //     result.emplace_back(castToBase(std::make_shared<LinearTransformation>(matrix, std::move(b))));
+        // }
+        return result;
+     }
+
+    virtual bool operator==(const Shape<ShapeDimension, SpaceDimension>& other) const {
+        if (typeid(other) == typeid(LinearTransformation<ShapeDimension, SpaceDimension>)){
+            const auto& otherCasted = dynamic_cast<const LinearTransformation<ShapeDimension, SpaceDimension>&>(other);
+            return (otherCasted.matrix == this->matrix && *(otherCasted.shape) == *(this->shape));
+        }
+        return false;
+    }
+
+     virtual Vertex<SpaceDimension> map(const Vertex<ShapeDimension>& vert) const {
+        return multiply(matrix, shape->map(vert));
+     }
+
+    virtual std::ostream& printTo(std::ostream& ost) const {
+        return ost << "LinearTransformation< "<< ShapeDimension<<", " << SpaceDimension << ">( " << matrix << ", " << *shape << ")";
+    }
+};
+
+template<unsigned SpaceDimension>
+class Line: public Shape<1, SpaceDimension> {
+private:
+    
+public:
+    using BaseType = Shape<1, SpaceDimension>;
+    using BoundaryShapeType = typename BaseType::BoundaryShapeType;
+
+    // Constructor
+    Line() = default;
+
+    virtual ~Line() = default;
+
+    // Method to check if a point is inside the line
+    virtual bool contains(const Vertex<SpaceDimension, double>& point) const override {
+        for (unsigned i = 1; i < SpaceDimension; ++i) {
+            if (abs(i) < 1e-8) {
+                return false;
+            }
+        }
+        return point[0] >= 0 && point[0] <= 1.0;
+    }
+
+     virtual std::vector<std::shared_ptr<BoundaryShapeType>> getBoundary() const {
+        std::vector<std::shared_ptr<BoundaryShapeType>> result;
+        result.emplace_back(std::make_shared<BoundaryShapeType>());
+        result.emplace_back(std::make_shared<BoundaryShapeType>(Vertex<SpaceDimension>{1.0}));
+        return result;
+     }
+
+    virtual bool operator==(const Shape<1, SpaceDimension>& other) const {
+        return typeid(other) == typeid(Line<SpaceDimension>);
+    }
+
+     virtual Vertex<SpaceDimension> map(const Vertex<1>& vert) const {
+        return Vertex<SpaceDimension>{vert[0]};
+     }
+
+    virtual std::ostream& printTo(std::ostream& ost) const {
+        return ost << "Line<" << SpaceDimension << ">()";
+    }
+};
+
+
+template<unsigned SpaceDimension>
+class Square: public Shape<2, SpaceDimension> {
+private:
+
+public:
+    using Shape<2, SpaceDimension>::castToBase;
+    // Constructor
+    Square() = default;
+
+    virtual ~Square() = default;
+
+    // Method to check if a point is inside the square
+    virtual bool contains(const Vertex<SpaceDimension, double>& point) const override {
+        for (unsigned i = 2; i < SpaceDimension; ++i) {
+            if (abs(i) < 1e-8) {
+                return false;
+            }
+        }
+        return point[0] >= 0 && point[0] <= 1.0 && point[1] >= 0 && point[1] <= 1.0;
+    }
+
+     virtual std::vector<std::shared_ptr<Shape<1,SpaceDimension>>> getBoundary() const {
+        std::vector<std::shared_ptr<Shape<1,SpaceDimension>>> result;
+        Vector<SpaceDimension, Vector<SpaceDimension>> rotationMatrix{{0.0, 1.0}, {1.0, 0.0}};
+        auto shift = Vector<SpaceDimension>{1.0};
+
+        result.emplace_back(std::make_shared<Line<SpaceDimension>>());
+        result.emplace_back(std::make_shared<Translation<1, SpaceDimension>>(shift ,std::make_shared<Line<SpaceDimension>>()));
+        result.emplace_back(std::make_shared<LinearTransformation<1, SpaceDimension>>(rotationMatrix, std::make_shared<Line<SpaceDimension>>()));
+        result.emplace_back(std::make_shared<LinearTransformation<1, SpaceDimension>>(rotationMatrix, std::make_shared<Translation<1, SpaceDimension>>(shift ,std::make_shared<Line<SpaceDimension>>())));
+
+        return result;
+     }
+
+    virtual bool operator==(const Shape<2, SpaceDimension>& other) const {
+        return typeid(other) == typeid(Square<SpaceDimension>);
+    }
+     virtual Vertex<SpaceDimension> map(const Vertex<2>& vert) const {
+        return Vertex<SpaceDimension>{vert[0], vert[1]};
+     }
+
+    virtual std::ostream& printTo(std::ostream& ost) const {
+        return ost << "Square<" << 2 << ", " << SpaceDimension << ">()";
+    }
+};
+
+
 
 void testGenerate() {
     // std::vector<Vertex<2>> vertices = {
@@ -574,10 +785,10 @@ void testGenerate() {
     //    {0.2, 0.9},
     // };
 
-    auto vertices = generate_hexagonal_grid(50, 50);
+    auto vertices = generate_hexagonal_grid(20, 20);
 
     VirtualGrid<2> grid = VirtualGrid<2>::withCenterOrigin({0.5, 0.5}, 100, 0.5);
-    auto area = Square({0.5, 0.5}, 1.0);
+    auto area = Square<2>();
     auto verticesView = VectorView<>::of(vertices);
     DBGVAR(verticesView);
     scanArea(grid, verticesView, area, 1e-3);
@@ -651,8 +862,22 @@ void testGradientCalculation() {
     DBGVAR(grad, (e<2, 0>()), (e<2, 1>()));
 }
 
+template<typename T>
+void PrintTo(const std::shared_ptr<T>& ptr, std::ostream& ost) {
+    VariableExport::exportVariable(ost, *ptr);
+} 
+
+void testShape() {
+    std::shared_ptr<Shape<2,2>> ptr = std::make_shared<Square<2>>();
+    std::shared_ptr<Shape<1,2>> ptrLine = Shape<2,2>::castToBase(std::make_shared<Line<2>>());
+    auto t = Translation<1,2>(Vector<2>{}, std::make_shared<Line<2>>());
+    auto pT = std::make_shared<Translation<1,2>>(Vector<2>{1.0} ,std::make_shared<Line<2>>());
+    DBGVAR(*ptr, ptr->getBoundary(), *ptrLine, t);
+}
+
 int main(int argc, char** argv) {
-    testGenerate();
+    testShape();
+    // testGenerate();
     // testGradientCalculation();
     // testCache();
 }
